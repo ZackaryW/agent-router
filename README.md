@@ -87,3 +87,9 @@ or ownership behavior.
 The Codex user skill root is `~/.codex/skills`. Uninstall removes only an intact
 projection previously installed by `agent-router`; unmanaged or modified content
 fails closed.
+
+## Development
+
+Behave features and step bindings are owned by capability roots under `features/`.
+Run affected BDD targets with `zpp behave bdd`, the complete audit with
+`zpp behave bdd-audit --all`, and unit tests with `uv run pytest`.

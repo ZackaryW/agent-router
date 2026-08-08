@@ -1,0 +1,64 @@
+version: 1
+commands:
+  bdd:
+    provider:
+      kind: argv
+      argv: [uv, run, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
+    targets:
+      skills:
+        value: features/agent_skill_lifecycle
+        paths:
+          - features/agent_skill_lifecycle/**
+          - features/support/**
+          - scripts/run_behave_roots.py
+          - pyproject.toml
+          - uv.lock
+          - zpp.behave.yaml
+          - src/agent_router/__init__.py
+          - src/agent_router/cli/**
+          - src/agent_router/core/**
+          - src/agent_router/utils/assets.py
+          - src/agent_router/utils/destinations.py
+          - src/agent_router/utils/mutation.py
+          - src/agent_router/utils/ownership.py
+      hooks:
+        value: features/agent_hook_lifecycle
+        paths:
+          - features/agent_hook_lifecycle/**
+          - features/support/**
+          - scripts/run_behave_roots.py
+          - pyproject.toml
+          - uv.lock
+          - zpp.behave.yaml
+          - src/agent_router/__init__.py
+          - src/agent_router/cli/**
+          - src/agent_router/core/**
+          - src/agent_router/utils/assets.py
+          - src/agent_router/utils/destinations.py
+          - src/agent_router/utils/mutation.py
+          - src/agent_router/utils/native_hooks.py
+          - src/agent_router/utils/ownership.py
+      command:
+        value: features/programmatic_command_surface
+        paths:
+          - features/programmatic_command_surface/**
+          - features/support/**
+          - scripts/run_behave_roots.py
+          - pyproject.toml
+          - uv.lock
+          - zpp.behave.yaml
+          - src/agent_router/**
+  bdd-audit:
+    provider:
+      kind: argv
+      argv: [uv, run, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
+    targets:
+      skills:
+        value: features/agent_skill_lifecycle
+        paths: ["**"]
+      hooks:
+        value: features/agent_hook_lifecycle
+        paths: ["**"]
+      command:
+        value: features/programmatic_command_surface
+        paths: ["**"]
