@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from hashlib import sha256
-import json
 from pathlib import Path
-import re
 from typing import Literal
 
 from agent_router.core.models import Agent, InvalidAssetError
@@ -20,7 +20,6 @@ from agent_router.utils.native_hooks import (
     parse_json_hook_source,
     parse_kimi_hook_source,
 )
-
 
 _NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _CLAUDE_SKILL_FIELDS = {"hooks", "context", "agent"}
@@ -111,7 +110,9 @@ class Hook:
                 if not files or not any(
                     item.relative_path.endswith((".ts", ".js")) for item in files
                 ):
-                    raise AssetError("Pi extension directory requires a TypeScript or JavaScript module")
+                    raise AssetError(
+                        "Pi extension directory requires a TypeScript or JavaScript module"
+                    )
                 return cls(
                     source.resolve(),
                     name,
@@ -176,11 +177,15 @@ def fragment_fingerprint(fragment: object) -> str:
 
 
 def _fragment_fingerprint(fragment: object) -> str:
-    encoded = json.dumps(fragment, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(fragment, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return sha256(encoded).hexdigest()
 
 
-def _json_compatibility(fragment: dict[str, list[dict[str, object]]]) -> frozenset[Agent]:
+def _json_compatibility(
+    fragment: dict[str, list[dict[str, object]]],
+) -> frozenset[Agent]:
     events = set(fragment)
     handler_types = {
         str(handler.get("type"))
@@ -191,7 +196,9 @@ def _json_compatibility(fragment: dict[str, list[dict[str, object]]]) -> frozens
     compatible: set[Agent] = set()
     if events.issubset(_CODEX_EVENTS) and handler_types.issubset({"command"}):
         compatible.add(Agent.CODEX)
-    if events.issubset(_CLAUDE_EVENTS) and handler_types.issubset(_CLAUDE_HANDLER_TYPES):
+    if events.issubset(_CLAUDE_EVENTS) and handler_types.issubset(
+        _CLAUDE_HANDLER_TYPES
+    ):
         compatible.add(Agent.CLAUDE)
     if not compatible:
         raise HookDocumentError("JSON hook has no supported native agent")

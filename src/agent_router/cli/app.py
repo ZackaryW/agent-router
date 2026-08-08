@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Callable
+from typing import Annotated
 
 import typer
 
-from agent_router import Agent, AgentRouter, AgentRouterError, Hook, LifecycleResult, Scope, Skill
-
+from agent_router import (
+    Agent,
+    AgentRouter,
+    AgentRouterError,
+    Hook,
+    LifecycleResult,
+    Scope,
+    Skill,
+)
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
 skill_app = typer.Typer(no_args_is_help=True)
@@ -15,7 +23,7 @@ hook_app = typer.Typer(no_args_is_help=True)
 app.add_typer(skill_app, name="skill")
 app.add_typer(hook_app, name="hook")
 
-AgentOption = Annotated[Agent, typer.Option("--agent")]
+AgentOption = Annotated[list[Agent], typer.Option("--agent")]
 ScopeOption = Annotated[Scope, typer.Option("--scope")]
 ProjectOption = Annotated[Path | None, typer.Option("--project-root")]
 DestinationOption = Annotated[Path | None, typer.Option("--destination")]
@@ -29,6 +37,8 @@ def _run(action: Callable[[], LifecycleResult], json_output: bool) -> None:
     except AgentRouterError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(error.exit_status) from error
+    except typer.BadParameter:
+        raise
     except Exception as error:
         typer.echo(f"unexpected operational failure: {error}", err=True)
         raise typer.Exit(1) from error
@@ -41,6 +51,14 @@ def _run(action: Callable[[], LifecycleResult], json_output: bool) -> None:
         )
 
 
+def _one_agent(agents: list[Agent]) -> Agent:
+    if len(agents) != 1:
+        raise typer.BadParameter(
+            "exactly one --agent is required", param_hint="--agent"
+        )
+    return agents[0]
+
+
 @skill_app.command("inspect")
 def inspect_skill(
     source: Path,
@@ -51,7 +69,7 @@ def inspect_skill(
     json_output: JsonOption = False,
 ) -> None:
     _run(
-        lambda: AgentRouter(agent).inspect_skill(
+        lambda: AgentRouter(_one_agent(agent)).inspect_skill(
             Skill.from_path(source),
             scope=scope,
             project_root=project_root,
@@ -72,7 +90,7 @@ def install_skill(
     json_output: JsonOption = False,
 ) -> None:
     _run(
-        lambda: AgentRouter(agent).install_skill(
+        lambda: AgentRouter(_one_agent(agent)).install_skill(
             Skill.from_path(source),
             scope=scope,
             project_root=project_root,
@@ -93,7 +111,7 @@ def uninstall_skill(
     json_output: JsonOption = False,
 ) -> None:
     _run(
-        lambda: AgentRouter(agent).uninstall_skill(
+        lambda: AgentRouter(_one_agent(agent)).uninstall_skill(
             name,
             scope=scope,
             project_root=project_root,
@@ -114,7 +132,7 @@ def inspect_hook(
     json_output: JsonOption = False,
 ) -> None:
     _run(
-        lambda: AgentRouter(agent).inspect_hook(
+        lambda: AgentRouter(_one_agent(agent)).inspect_hook(
             Hook.from_path(source),
             scope=scope,
             project_root=project_root,
@@ -136,7 +154,7 @@ def install_hook(
     json_output: JsonOption = False,
 ) -> None:
     _run(
-        lambda: AgentRouter(agent).install_hook(
+        lambda: AgentRouter(_one_agent(agent)).install_hook(
             Hook.from_path(source),
             scope=scope,
             project_root=project_root,
@@ -157,7 +175,7 @@ def uninstall_hook(
     json_output: JsonOption = False,
 ) -> None:
     _run(
-        lambda: AgentRouter(agent).uninstall_hook(
+        lambda: AgentRouter(_one_agent(agent)).uninstall_hook(
             name,
             scope=scope,
             project_root=project_root,

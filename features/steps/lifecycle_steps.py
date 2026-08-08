@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import builtins
-from contextlib import redirect_stderr
-from io import StringIO
 import json
-from pathlib import Path
-import shutil
 import subprocess
 import sys
+from contextlib import redirect_stderr
+from io import StringIO
+from pathlib import Path
 
 from behave import given, then, when
 from typer.testing import CliRunner
@@ -26,7 +25,9 @@ from agent_router import (
 from agent_router.cli.app import app
 
 
-def _write_skill(root: Path, name: str = "reviewer", *, body: str = "Body", extra: str = "") -> Path:
+def _write_skill(
+    root: Path, name: str = "reviewer", *, body: str = "Body", extra: str = ""
+) -> Path:
     source = root / f"source-{name}"
     source.mkdir(parents=True, exist_ok=True)
     (source / "SKILL.md").write_text(
@@ -36,7 +37,14 @@ def _write_skill(root: Path, name: str = "reviewer", *, body: str = "Body", extr
     return source
 
 
-def _write_json_hook(root: Path, name: str = "reviewer", *, event: str = "PreToolUse", handler_type: str = "command", extra_handler: str = "") -> Path:
+def _write_json_hook(
+    root: Path,
+    name: str = "reviewer",
+    *,
+    event: str = "PreToolUse",
+    handler_type: str = "command",
+    extra_handler: str = "",
+) -> Path:
     handler: dict[str, object] = {"type": handler_type}
     if handler_type == "command":
         handler["command"] = "check"
@@ -74,7 +82,7 @@ def _router(context, agent: Agent = Agent.CODEX) -> AgentRouter:
 def _capture(context, action) -> None:
     try:
         context.result = action()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - scenarios assert captured failures
         context.error = error
 
 
@@ -217,7 +225,21 @@ def uninstall_skill(context) -> None:
 
 @when("I request one skill operation for Codex and Claude")
 def multi_agent_skill(context) -> None:
-    _capture(context, lambda: AgentRouter((Agent.CODEX, Agent.CLAUDE)))
+    result = CliRunner().invoke(
+        app,
+        [
+            "skill",
+            "inspect",
+            str(context.source),
+            "--agent",
+            "codex",
+            "--agent",
+            "claude",
+            "--destination",
+            str(context.destination),
+        ],
+    )
+    context.error = ValueError(result.output) if result.exit_code != 0 else None
 
 
 @then("the skill is reported as natively compatible")
@@ -418,7 +440,9 @@ def given_installed_hook(context) -> None:
     _router(context).install_hook(context.hook, destination=context.destination)
 
 
-@given("an intact older hook integration installed by agent-router beside unrelated hooks")
+@given(
+    "an intact older hook integration installed by agent-router beside unrelated hooks"
+)
 def given_old_hook(context) -> None:
     given_installed_hook(context)
     context.source.write_text(
@@ -428,9 +452,7 @@ def given_old_hook(context) -> None:
                     "PreToolUse": [
                         {
                             "matcher": "shell",
-                            "hooks": [
-                                {"type": "command", "command": "new-check"}
-                            ],
+                            "hooks": [{"type": "command", "command": "new-check"}],
                         }
                     ]
                 }
@@ -482,7 +504,7 @@ def install_native_hook(context, agent: str, scope: str) -> None:
 def inspect_hook(context, agent: str) -> None:
     try:
         hook = getattr(context, "hook", None) or Hook.from_path(context.source)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - invalid-source scenarios inspect it
         context.error = error
         return
     _capture(
@@ -552,7 +574,21 @@ def uninstall_hook(context) -> None:
 
 @when("I request one hook operation for Codex and Claude")
 def multi_agent_hook(context) -> None:
-    _capture(context, lambda: AgentRouter((Agent.CODEX, Agent.CLAUDE)))
+    result = CliRunner().invoke(
+        app,
+        [
+            "hook",
+            "inspect",
+            str(context.source),
+            "--agent",
+            "codex",
+            "--agent",
+            "claude",
+            "--destination",
+            str(context.destination),
+        ],
+    )
+    context.error = ValueError(result.output) if result.exit_code != 0 else None
 
 
 @then("the integration is installed through that native surface")
@@ -565,7 +601,11 @@ def hook_installed(context) -> None:
 @then("unrelated native configuration is retained")
 @then("unrelated native configuration is unchanged")
 def unrelated_hook_retained(context) -> None:
-    destination = context.result.destination if context.result is not None else context.destination
+    destination = (
+        context.result.destination
+        if context.result is not None
+        else context.destination
+    )
     if destination.is_file() and destination.suffix == ".json":
         document = json.loads(destination.read_text(encoding="utf-8"))
         if "permissions" in document:
@@ -697,24 +737,24 @@ def given_command_outcome(context, outcome: str) -> None:
 
 @when("I import agent_router and its public contracts")
 def import_base(context) -> None:
+    script = (
+        "import builtins; original=builtins.__import__; "
+        "builtins.__import__=lambda name,*a,**k: "
+        '(_ for _ in ()).throw(ModuleNotFoundError("blocked typer")) '
+        "if name == 'typer' else original(name,*a,**k); "
+        "from agent_router import AgentRouter, Skill, Hook"
+    )
     context.import_process = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import builtins; original=builtins.__import__; "
-            "builtins.__import__=lambda name,*a,**k: "
-            "(_ for _ in ()).throw(ModuleNotFoundError(\"blocked typer\")) "
-            "if name == 'typer' else original(name,*a,**k); "
-            "from agent_router import AgentRouter, Skill, Hook",
-        ],
+        [sys.executable, "-c", script],
         capture_output=True,
         text=True,
+        check=False,
     )
 
 
 @when("I invoke the optional command surface")
 def invoke_missing_cli(context) -> None:
-    import agent_router.cli as cli
+    from agent_router import cli
 
     real_import = builtins.__import__
 
@@ -761,7 +801,15 @@ def invoke_lifecycle_command(context, kind: str, operation: str) -> None:
     if operation == "uninstall":
         install = runner.invoke(
             app,
-            [kind, "install", str(source), "--agent", "codex", "--destination", str(destination)],
+            [
+                kind,
+                "install",
+                str(source),
+                "--agent",
+                "codex",
+                "--destination",
+                str(destination),
+            ],
         )
         assert install.exit_code == 0, install.output
         base.append(name)
@@ -862,7 +910,15 @@ def exit_status_command(context) -> None:
         source = _write_kimi_hook(context.root)
         context.cli_result = context.runner.invoke(
             app,
-            ["hook", "install", str(source), "--agent", "codex", "--destination", str(context.root / "hooks.json")],
+            [
+                "hook",
+                "install",
+                str(source),
+                "--agent",
+                "codex",
+                "--destination",
+                str(context.root / "hooks.json"),
+            ],
         )
     elif outcome in {"ownership conflict", "destination conflict"}:
         target = context.destination / "reviewer"
@@ -909,7 +965,10 @@ def structured_codex_result(context) -> None:
 @then("the request is handled through the public library lifecycle")
 def command_uses_lifecycle(context) -> None:
     assert context.cli_result.exit_code == 0, context.cli_result.output
-    assert any(status in context.cli_result.output for status in ("absent", "installed", "removed"))
+    assert any(
+        status in context.cli_result.output
+        for status in ("absent", "installed", "removed")
+    )
 
 
 @then("no interactive selection or confirmation is required")

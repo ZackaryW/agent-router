@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from agent_router.utils import mutation
-from agent_router.utils.mutation import MutationPlan, Write, apply_mutation, atomic_write
+from agent_router.utils.mutation import (
+    MutationPlan,
+    Write,
+    apply_mutation,
+    atomic_write,
+)
 
 
 def test_atomically_replaces_file_content(tmp_path: Path) -> None:

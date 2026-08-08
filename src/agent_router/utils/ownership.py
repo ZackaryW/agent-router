@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
-from pathlib import Path
 import re
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Literal
 
 from agent_router.utils.destinations import Destination
-
 
 OwnershipState = Literal["absent", "unmanaged", "current", "outdated", "conflict"]
 _NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -57,7 +56,13 @@ def load_ownership(path: Path) -> OwnershipRecord | None:
             raise ValueError
         record = OwnershipRecord(**value)
         _validate_record(record)
-    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as error:
         raise OwnershipError(f"ownership record is invalid: {path}") from error
     return record
 

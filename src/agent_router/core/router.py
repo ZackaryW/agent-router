@@ -14,7 +14,12 @@ from agent_router.core.models import (
     UnsupportedAssetError,
     UnsupportedScopeError,
 )
-from agent_router.utils.assets import AssetError, AssetFile, collect_asset_tree, fingerprint_asset
+from agent_router.utils.assets import (
+    AssetError,
+    AssetFile,
+    collect_asset_tree,
+    fingerprint_asset,
+)
 from agent_router.utils.destinations import (
     Destination,
     UnsupportedDestinationError,
@@ -66,7 +71,12 @@ class AgentRouter:
         if self.agent not in skill.compatible_agents:
             state = "unsupported"
         return self._result(
-            "inspect", AssetKind.SKILL, skill.name, selected_scope, resolved, state,
+            "inspect",
+            AssetKind.SKILL,
+            skill.name,
+            selected_scope,
+            resolved,
+            state,
             skill.compatible_agents,
         )
 
@@ -97,8 +107,13 @@ class AgentRouter:
             raise ConflictError(f"conflicting skill destination: {target}")
         if state == "current":
             return self._result(
-                "install", AssetKind.SKILL, skill.name, selected_scope, resolved,
-                "no-op", skill.compatible_agents,
+                "install",
+                AssetKind.SKILL,
+                skill.name,
+                selected_scope,
+                resolved,
+                "no-op",
+                skill.compatible_agents,
             )
 
         record = OwnershipRecord(
@@ -116,8 +131,13 @@ class AgentRouter:
         replacements = (target,) if state == "outdated" else ()
         apply_mutation(MutationPlan(writes, replacements))
         return self._result(
-            "install", AssetKind.SKILL, skill.name, selected_scope, resolved,
-            "updated" if state == "outdated" else "installed", skill.compatible_agents,
+            "install",
+            AssetKind.SKILL,
+            skill.name,
+            selected_scope,
+            resolved,
+            "updated" if state == "outdated" else "installed",
+            skill.compatible_agents,
         )
 
     def uninstall_skill(
@@ -139,7 +159,9 @@ class AgentRouter:
             resolved, AssetKind.SKILL, name, target, record.fingerprint
         )
         if state != "current":
-            raise ConflictError(f"skill is not an intact agent-router installation: {target}")
+            raise ConflictError(
+                f"skill is not an intact agent-router installation: {target}"
+            )
         apply_mutation(MutationPlan((), (target, manifest)))
         return self._result(
             "uninstall", AssetKind.SKILL, name, selected_scope, resolved, "removed"
@@ -162,8 +184,13 @@ class AgentRouter:
             fragment, converted = self._hook_fragment(hook, allow_conversion)
         except UnsupportedAssetError:
             return self._result(
-                "inspect", AssetKind.HOOK, hook.name, selected_scope, resolved,
-                "unsupported", hook.compatible_agents,
+                "inspect",
+                AssetKind.HOOK,
+                hook.name,
+                selected_scope,
+                resolved,
+                "unsupported",
+                hook.compatible_agents,
             )
         if resolved.shared_config:
             state, _ = self._inspect_shared(resolved, hook.name, fragment)
@@ -173,8 +200,14 @@ class AgentRouter:
                 resolved, AssetKind.HOOK, hook.name, target, expected
             )
         return self._result(
-            "inspect", AssetKind.HOOK, hook.name, selected_scope, resolved, state,
-            hook.compatible_agents, converted,
+            "inspect",
+            AssetKind.HOOK,
+            hook.name,
+            selected_scope,
+            resolved,
+            state,
+            hook.compatible_agents,
+            converted,
         )
 
     def install_hook(
@@ -196,8 +229,14 @@ class AgentRouter:
         else:
             state = self._install_hook_projection(resolved, hook)
         return self._result(
-            "install", AssetKind.HOOK, hook.name, selected_scope, resolved, state,
-            hook.compatible_agents, converted,
+            "install",
+            AssetKind.HOOK,
+            hook.name,
+            selected_scope,
+            resolved,
+            state,
+            hook.compatible_agents,
+            converted,
         )
 
     def uninstall_hook(
@@ -220,7 +259,11 @@ class AgentRouter:
             details = cast(dict[str, object], record.fragment)
             target = resolved.path / str(details["target_name"])
             state, _ = self._inspect_dedicated(
-                resolved, AssetKind.HOOK, name, target, record.fingerprint,
+                resolved,
+                AssetKind.HOOK,
+                name,
+                target,
+                record.fingerprint,
                 fingerprint_name=cast(str | None, details.get("fingerprint_name")),
             )
             if state != "current":
@@ -285,7 +328,7 @@ class AgentRouter:
                 actual_fingerprint=actual,
                 expected_fingerprint=expected_fingerprint,
             )
-        except (AssetError, OwnershipError, OSError, ValueError):
+        except AssetError, OwnershipError, OSError, ValueError:
             state = "conflict"
         return state, manifest
 
@@ -316,7 +359,9 @@ class AgentRouter:
             return destination.path / source_name, hook.fingerprint, source_name
         if hook.format == "pi-directory":
             return destination.path / hook.name, hook.fingerprint, None
-        raise UnsupportedAssetError(f"{self.agent.value} requires a native extension artifact")
+        raise UnsupportedAssetError(
+            f"{self.agent.value} requires a native extension artifact"
+        )
 
     def _install_hook_projection(self, destination: Destination, hook: Hook) -> str:
         target, expected, fingerprint_name = self._hook_projection(destination, hook)
@@ -376,11 +421,13 @@ class AgentRouter:
                 actual_fingerprint=actual,
                 expected_fingerprint=fragment_fingerprint(expected_fragment),
             )
-        except (OwnershipError, HookDocumentError, OSError, ValueError, TypeError):
+        except OwnershipError, HookDocumentError, OSError, ValueError, TypeError:
             state = "conflict"
         return state, manifest
 
-    def _install_shared(self, destination: Destination, name: str, fragment: object) -> str:
+    def _install_shared(
+        self, destination: Destination, name: str, fragment: object
+    ) -> str:
         state, manifest = self._inspect_shared(destination, name, fragment)
         if state in {"unmanaged", "conflict"}:
             raise ConflictError(f"conflicting hook destination: {destination.path}")
@@ -455,7 +502,9 @@ class AgentRouter:
             )
         )
 
-    def _shared_fragment_present(self, destination: Destination, fragment: object) -> bool:
+    def _shared_fragment_present(
+        self, destination: Destination, fragment: object
+    ) -> bool:
         if not destination.path.exists() and not destination.path.is_symlink():
             return False
         if self.agent in {Agent.CLAUDE, Agent.CODEX}:
@@ -527,7 +576,9 @@ def _fingerprint_path(path: Path, *, fingerprint_name: str | None = None) -> str
     if path.is_dir():
         return fingerprint_asset(collect_asset_tree(path))
     if path.is_file():
-        return fingerprint_asset((AssetFile(fingerprint_name or path.name, path.read_bytes()),))
+        return fingerprint_asset(
+            (AssetFile(fingerprint_name or path.name, path.read_bytes()),)
+        )
     raise AssetError(f"managed content is not regular: {path}")
 
 

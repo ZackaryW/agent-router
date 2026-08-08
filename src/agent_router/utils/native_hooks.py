@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from copy import deepcopy
-import json
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +10,6 @@ import tomlkit
 from tomlkit.container import Container
 from tomlkit.items import AoT
 from tomlkit.toml_document import TOMLDocument
-
 
 JsonObject = dict[str, Any]
 JsonHookFragment = dict[str, list[JsonObject]]
@@ -142,7 +141,9 @@ def remove_kimi_hooks(
         try:
             index = current.index(entry)
         except ValueError as error:
-            raise HookDocumentError("owned hook fragment is missing or modified") from error
+            raise HookDocumentError(
+                "owned hook fragment is missing or modified"
+            ) from error
         del hooks[index]
         del current[index]
     if not hooks:
@@ -230,10 +231,15 @@ def _validated_kimi_hooks(value: object) -> list[JsonObject]:
     for item in value:
         if not isinstance(item, (dict, Container)):
             raise HookDocumentError("Kimi hook entry must be a table")
-        entry = {str(key): val.unwrap() if hasattr(val, "unwrap") else val for key, val in item.items()}
+        entry = {
+            str(key): val.unwrap() if hasattr(val, "unwrap") else val
+            for key, val in item.items()
+        }
         if not set(entry).issubset(allowed):
             raise HookDocumentError("Kimi hook contains unsupported fields")
-        if not isinstance(entry.get("event"), str) or not isinstance(entry.get("command"), str):
+        if not isinstance(entry.get("event"), str) or not isinstance(
+            entry.get("command"), str
+        ):
             raise HookDocumentError("Kimi hook requires event and command strings")
         if "matcher" in entry and not isinstance(entry["matcher"], str):
             raise HookDocumentError("Kimi hook matcher must be a string")

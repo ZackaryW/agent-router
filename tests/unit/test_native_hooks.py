@@ -3,17 +3,16 @@ from copy import deepcopy
 import pytest
 
 from agent_router.utils.native_hooks import (
-    convert_portable_command_hooks,
     HookDocumentError,
-    parse_kimi_hook_source,
+    convert_portable_command_hooks,
     parse_json_hook_source,
+    parse_kimi_hook_source,
     reconcile_json_hooks,
     reconcile_kimi_hooks,
     remove_json_hooks,
     remove_kimi_hooks,
     serialize_toml,
 )
-
 
 FRAGMENT = {
     "PreToolUse": [
@@ -30,7 +29,10 @@ def test_reconciles_json_hooks_without_changing_unrelated_content() -> None:
         "permissions": {"allow": ["Read"]},
         "hooks": {
             "SessionStart": [
-                {"matcher": "startup", "hooks": [{"type": "command", "command": "hello"}]}
+                {
+                    "matcher": "startup",
+                    "hooks": [{"type": "command", "command": "hello"}],
+                }
             ]
         },
     }
@@ -52,7 +54,11 @@ def test_repeating_json_reconciliation_is_a_no_op() -> None:
 
 def test_removes_only_the_exact_owned_json_fragment() -> None:
     document = reconcile_json_hooks(
-        {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "other"}]}]}},
+        {
+            "hooks": {
+                "PreToolUse": [{"hooks": [{"type": "command", "command": "other"}]}]
+            }
+        },
         FRAGMENT,
     )
 
@@ -72,7 +78,9 @@ def test_rejects_removing_a_modified_json_fragment() -> None:
 
 
 def test_parses_a_native_json_hook_source() -> None:
-    source = b'{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"check"}]}]}}'
+    source = (
+        b'{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"check"}]}]}}'
+    )
 
     assert parse_json_hook_source(source) == {
         "PreToolUse": [{"hooks": [{"type": "command", "command": "check"}]}]
@@ -108,7 +116,9 @@ def test_removes_only_the_exact_owned_kimi_fragment() -> None:
     source = b'[[hooks]]\nevent = "SessionStart"\ncommand = "hello"\n'
     installed = serialize_toml(reconcile_kimi_hooks(source, KIMI_FRAGMENT))
 
-    removed = serialize_toml(remove_kimi_hooks(installed, KIMI_FRAGMENT)).decode("utf-8")
+    removed = serialize_toml(remove_kimi_hooks(installed, KIMI_FRAGMENT)).decode(
+        "utf-8"
+    )
 
     assert 'command = "hello"' in removed
     assert 'command = "check"' not in removed

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-import re
 
 import yaml
-
 
 _SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -29,7 +28,9 @@ def collect_asset_tree(root: Path) -> tuple[AssetFile, ...]:
         raise AssetError(f"asset root is not a directory: {root}")
 
     files: list[AssetFile] = []
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+    for path in sorted(
+        root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()
+    ):
         relative = path.relative_to(root).as_posix()
         if path.is_symlink():
             raise AssetError(f"asset contains a symbolic link: {relative}")

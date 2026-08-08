@@ -40,7 +40,11 @@ def test_resolves_the_native_destination_matrix(
     project = tmp_path / "project"
 
     destination = resolve_destination(
-        agent, kind, scope, home=home, project_root=project if scope == "project" else None
+        agent,
+        kind,
+        scope,
+        home=home,
+        project_root=project if scope == "project" else None,
     )
 
     base = project if scope == "project" else home
@@ -50,7 +54,9 @@ def test_resolves_the_native_destination_matrix(
 
 def test_project_scope_requires_a_project_root(tmp_path: Path) -> None:
     with pytest.raises(UnsupportedDestinationError, match="project root"):
-        resolve_destination("codex", "skill", "project", home=tmp_path, project_root=None)
+        resolve_destination(
+            "codex", "skill", "project", home=tmp_path, project_root=None
+        )
 
 
 def test_kimi_project_hooks_are_unsupported(tmp_path: Path) -> None:
