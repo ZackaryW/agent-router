@@ -244,7 +244,7 @@ def result_user_scope(context) -> None:
 @then("the owned skill is installed through the agent's native project skill surface")
 def native_project_skill(context) -> None:
     assert context.error is None
-    assert context.result.destination.is_relative_to(context.project_root)
+    assert context.result.destination.is_relative_to(context.project_root.resolve())
 
 
 @then("the operation reports an unsupported asset")
@@ -362,7 +362,7 @@ def given_invalid_hook(context, state: str) -> None:
 
 @given("a portable {source} command-hook configuration")
 def given_portable_hook(context, source: str) -> None:
-    source_agent = Agent(source)
+    source_agent = Agent(source.lower())
     context.source = _write_json_hook(context.root)
     context.hook = Hook.from_path(context.source, source_agent=source_agent)
     context.source_agent = source_agent
@@ -470,7 +470,7 @@ def install_native_hook(context, agent: str, scope: str) -> None:
     selected_scope = Scope(scope)
     _capture(
         context,
-        lambda: _router(context, Agent(agent)).install_hook(
+        lambda: _router(context, Agent(agent.lower())).install_hook(
             context.hook,
             scope=selected_scope,
             project_root=getattr(context, "project_root", None),
