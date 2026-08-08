@@ -544,6 +544,29 @@ class AgentRouter:
             raise ConflictError(
                 f"{kind.value} {name!r} was not installed by agent-router at {destination.path}"
             )
+        if kind is AssetKind.HOOK:
+            if destination.shared_config:
+                expected_type = (
+                    dict if self.agent in {Agent.CLAUDE, Agent.CODEX} else list
+                )
+                if not isinstance(record.fragment, expected_type):
+                    raise ConflictError("hook ownership fragment is invalid")
+            else:
+                details = record.fragment
+                if not isinstance(details, dict):
+                    raise ConflictError("hook ownership projection is invalid")
+                target_name = details.get("target_name")
+                if (
+                    not isinstance(target_name, str)
+                    or not target_name
+                    or Path(target_name).name != target_name
+                    or details.get("target_type") not in {"file", "directory"}
+                    or (
+                        details.get("fingerprint_name") is not None
+                        and not isinstance(details.get("fingerprint_name"), str)
+                    )
+                ):
+                    raise ConflictError("hook ownership projection is invalid")
         return record
 
     def _result(
