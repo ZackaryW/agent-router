@@ -17,6 +17,21 @@ The base `agent_router` installation SHALL expose the supported agent asset life
 - **WHEN** a caller invokes the command surface from a base-only installation
 - **THEN** the system reports an actionable instruction to install `agent_router[cli]`
 
+### Requirement: GitHub-only distribution
+The supported distribution source for `agent-router` SHALL be `https://github.com/ZackaryW/agent-router`. Callers SHALL be able to install the base importable library or the optional `cli` extra directly from that Git repository with `uv`. Project documentation and automation SHALL NOT require or present PyPI or another Python package index as an installation source. The repository SHALL retain the Python project metadata needed for Git-based builds, imports, optional extras, and console entry points.
+
+#### Scenario: Install the library from GitHub
+- **WHEN** a caller adds `agent-router` using the supported Git repository URL without the `cli` extra
+- **THEN** `uv` builds the repository and installs the importable base library without requiring a package-index release of `agent-router`
+
+#### Scenario: Install the CLI extra from GitHub
+- **WHEN** a caller adds `agent-router[cli]` using the supported Git repository URL
+- **THEN** `uv` builds the repository with its optional CLI dependencies and exposes the `agent-router` command
+
+#### Scenario: Avoid package-index installation guidance
+- **WHEN** a caller consults the supported installation documentation
+- **THEN** every `agent-router` installation source points to the GitHub repository rather than PyPI or another Python package index
+
 ### Requirement: Agent-bound Python lifecycle
 The supported Python API SHALL expose `Agent`, `AgentRouter`, `Skill`, `Hook`, `Scope`, structured compatibility and lifecycle results, and typed domain errors. Constructing `AgentRouter` with one `Agent` SHALL bind subsequent lifecycle operations to that agent without performing filesystem mutation during construction.
 
@@ -59,11 +74,11 @@ The supported Python API SHALL expose `Agent`, `AgentRouter`, `Skill`, `Hook`, `
 - **THEN** it raises a typed domain error without printing CLI output or terminating the Python process
 
 ### Requirement: Optional packaged uvx command
-Installation with the `agent_router[cli]` extra SHALL provide the Typer-based `agent-router` console command for execution through `uvx`. The command SHALL expose `skill inspect`, `skill install`, `skill uninstall`, `hook inspect`, `hook install`, and `hook uninstall`. Every invocation SHALL accept exactly one `--agent`. Install commands SHALL expose `--allow-conversion`, disabled by default, as explicit authorization to use an available converter for that operation. The command SHALL NOT require the selected agent's executable to be installed because it manages filesystem projections rather than launching the agent.
+The GitHub repository with the `agent_router[cli]` extra SHALL provide the Typer-based `agent-router` console command for execution through `uvx` without requiring a package-index release. The command SHALL expose `skill inspect`, `skill install`, `skill uninstall`, `hook inspect`, `hook install`, and `hook uninstall`. Every invocation SHALL accept exactly one `--agent`. Install commands SHALL expose `--allow-conversion`, disabled by default, as explicit authorization to use an available converter for that operation. The command SHALL NOT require the selected agent's executable to be installed because it manages filesystem projections rather than launching the agent.
 
 #### Scenario: Invoke through uvx
-- **WHEN** a caller installs the `cli` extra and runs the published command through `uvx` with a valid lifecycle request
-- **THEN** the `agent-router` command performs the requested skill or hook operation
+- **WHEN** a caller runs the `agent-router` command through `uvx` with the `cli` extra sourced from `https://github.com/ZackaryW/agent-router`
+- **THEN** the command performs the requested valid skill or hook operation without resolving `agent-router` from a package index
 
 #### Scenario: Authorize conversion through the command
 - **WHEN** a caller supplies `--allow-conversion` for a non-native asset with an available explicit converter
@@ -132,4 +147,3 @@ The command SHALL emit human-readable output by default and a stable JSON result
 #### Scenario: Emit a JSON result
 - **WHEN** a caller supplies `--json` to a lifecycle command
 - **THEN** the command writes one stable structured result envelope to standard output and keeps diagnostics on standard error
-
