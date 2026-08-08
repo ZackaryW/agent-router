@@ -3,7 +3,7 @@ commands:
   bdd:
     provider:
       kind: argv
-      argv: [uv, run, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
+      argv: [uv, run, --python, "3.11", --extra, cli, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
     targets:
       skills:
         value: features/agent_skill_lifecycle
@@ -51,7 +51,7 @@ commands:
   bdd-audit:
     provider:
       kind: argv
-      argv: [uv, run, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
+      argv: [uv, run, --python, "3.11", --extra, cli, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
     targets:
       skills:
         value: features/agent_skill_lifecycle

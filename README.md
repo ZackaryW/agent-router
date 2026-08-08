@@ -8,7 +8,7 @@ It is an importable library first. The Typer CLI is optional.
 ## Install from GitHub
 
 `agent-router` is installed directly from its GitHub repository; it is not
-published to a package index.
+published to a package index. Python 3.11 or later is required.
 
 ```console
 uv add "agent-router @ git+https://github.com/ZackaryW/agent-router.git"

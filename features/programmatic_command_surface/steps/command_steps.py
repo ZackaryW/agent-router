@@ -75,6 +75,11 @@ def git_build_metadata(context) -> None:
     assert metadata["build-system"]["build-backend"]
 
 
+@then("project metadata supports Python 3.11 and later")
+def python_311_metadata(context) -> None:
+    assert context.project_metadata["project"]["requires-python"] == ">=3.11"
+
+
 @given("the cli extra is installed")
 def given_cli_distribution(context) -> None:
     context.runner = CliRunner()

@@ -18,6 +18,7 @@ Feature: Use agent-router as a library or optional command
     Then base and CLI installations source agent-router from GitHub
     And no package-index installation is offered
     And Git builds retain library and CLI metadata
+    And project metadata supports Python 3.11 and later
 
   Scenario: Install a skill through the agent-bound library
     Given a valid portable Agent Skill

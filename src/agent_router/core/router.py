@@ -328,7 +328,7 @@ class AgentRouter:
                 actual_fingerprint=actual,
                 expected_fingerprint=expected_fingerprint,
             )
-        except AssetError, OwnershipError, OSError, ValueError:
+        except (AssetError, OwnershipError, OSError, ValueError):
             state = "conflict"
         return state, manifest
 
@@ -421,7 +421,7 @@ class AgentRouter:
                 actual_fingerprint=actual,
                 expected_fingerprint=fragment_fingerprint(expected_fragment),
             )
-        except OwnershipError, HookDocumentError, OSError, ValueError, TypeError:
+        except (OwnershipError, HookDocumentError, OSError, ValueError, TypeError):
             state = "conflict"
         return state, manifest
 
