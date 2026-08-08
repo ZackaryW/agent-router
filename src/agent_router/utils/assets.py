@@ -56,6 +56,7 @@ def parse_skill_document(source: bytes) -> Mapping[str, object]:
         text = source.decode("utf-8")
     except UnicodeDecodeError as error:
         raise AssetError("SKILL.md is not valid UTF-8") from error
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         raise AssetError("SKILL.md is missing YAML frontmatter")
     end = text.find("\n---", 4)

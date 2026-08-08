@@ -48,6 +48,14 @@ def test_parses_required_skill_frontmatter() -> None:
     assert metadata["description"] == "Reviews code"
 
 
+def test_parses_crlf_skill_frontmatter_without_changing_values() -> None:
+    metadata = parse_skill_document(
+        b"---\r\nname: reviewer\r\ndescription: Reviews code\r\n---\r\nBody\r\n"
+    )
+
+    assert metadata == {"name": "reviewer", "description": "Reviews code"}
+
+
 @pytest.mark.parametrize(
     "source",
     [
