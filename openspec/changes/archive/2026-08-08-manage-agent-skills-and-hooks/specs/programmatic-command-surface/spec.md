@@ -1,0 +1,132 @@
+## Purpose
+
+Exposes the agent asset lifecycle through an importable base library and an optional deterministic command suitable for direct human use and unattended automation through `uvx`.
+
+## ADDED Requirements
+
+### Requirement: Importable base library
+The base `agent_router` installation SHALL expose the supported agent asset lifecycle as an importable Python library without requiring Typer or another CLI-only dependency. Importing the library SHALL NOT import the CLI package transitively. Attempting to invoke or import the optional command surface without the `cli` extra SHALL report that `agent_router[cli]` is required rather than exposing a raw optional-dependency import failure.
+
+#### Scenario: Import without CLI dependencies
+- **WHEN** a Python environment installs the base package without the `cli` extra
+- **THEN** importing `agent_router` and its supported library contracts succeeds without Typer being installed
+
+#### Scenario: Invoke an unavailable optional command
+- **WHEN** a caller invokes the command surface from a base-only installation
+- **THEN** the system reports an actionable instruction to install `agent_router[cli]`
+
+### Requirement: Agent-bound Python lifecycle
+The supported Python API SHALL expose `Agent`, `AgentRouter`, `Skill`, `Hook`, `Scope`, structured compatibility and lifecycle results, and typed domain errors. Constructing `AgentRouter` with one `Agent` SHALL bind subsequent lifecycle operations to that agent without performing filesystem mutation during construction.
+
+`Skill.from_path` and `Hook.from_path` SHALL load and validate one existing local source asset without mutating an agent destination and SHALL make detected native-agent compatibility available to library callers. Agent-bound skill and hook inspection, installation, and uninstallation SHALL be available through Pythonic methods. Each lifecycle method SHALL use user scope by default, require an explicit `project_root` for project scope, and accept an optional `destination` override with the same behavior and safety contract as the CLI `--destination` option. Installation SHALL accept `allow_conversion`, which SHALL default to false. Uninstallation SHALL accept a stable asset name and SHALL NOT require the original source. Methods SHALL return structured results or raise typed domain errors rather than terminating the process.
+
+#### Scenario: Install through the library
+- **WHEN** a caller invokes `AgentRouter(Agent.CODEX).install_skill(Skill.from_path(source))`
+- **THEN** the library performs the Codex-bound managed installation and returns a structured lifecycle result
+
+#### Scenario: Inspect compatibility before installation
+- **WHEN** a caller loads a valid source through `Skill.from_path` or `Hook.from_path`
+- **THEN** the library returns an asset whose detected native-agent compatibility can be inspected without constructing a router or mutating a destination
+
+#### Scenario: Authorize conversion through the library
+- **WHEN** a caller passes `allow_conversion=True` for a non-native asset with an available explicit converter
+- **THEN** the library may validate and use that converter for the selected agent and operation
+
+#### Scenario: Override a library destination
+- **WHEN** a caller passes `destination` to an agent-bound `install_skill` invocation
+- **THEN** the library uses that explicit destination under the same validation, ownership, and mutation rules as the CLI override
+
+#### Scenario: Inspect a library destination
+- **WHEN** a caller passes `destination` to an agent-bound skill or hook inspection
+- **THEN** the library reports compatibility and relevant state at that exact destination without mutation
+
+#### Scenario: Uninstall from a library destination
+- **WHEN** a caller passes an asset name and `destination` to an agent-bound uninstallation method
+- **THEN** the library removes only an intact projection installed and owned by `agent-router` at that destination
+
+#### Scenario: Select a library project scope
+- **WHEN** a caller passes `Scope.PROJECT` and an explicit `project_root` to an agent-bound lifecycle operation
+- **THEN** the library resolves the selected agent's native repository-local destination from that project root
+
+#### Scenario: Retain project semantics with a library destination
+- **WHEN** a caller selects `Scope.PROJECT` and supplies `destination` without `project_root`
+- **THEN** the library rejects the request before destination inspection or mutation
+
+#### Scenario: Report a library domain conflict
+- **WHEN** a library lifecycle operation encounters expected conflicting managed state
+- **THEN** it raises a typed domain error without printing CLI output or terminating the Python process
+
+### Requirement: Optional packaged uvx command
+Installation with the `agent_router[cli]` extra SHALL provide the Typer-based `agent-router` console command for execution through `uvx`. The command SHALL expose `skill inspect`, `skill install`, `skill uninstall`, `hook inspect`, `hook install`, and `hook uninstall`. Every invocation SHALL accept exactly one `--agent`. Install commands SHALL expose `--allow-conversion`, disabled by default, as explicit authorization to use an available converter for that operation. The command SHALL NOT require the selected agent's executable to be installed because it manages filesystem projections rather than launching the agent.
+
+#### Scenario: Invoke through uvx
+- **WHEN** a caller installs the `cli` extra and runs the published command through `uvx` with a valid lifecycle request
+- **THEN** the `agent-router` command performs the requested skill or hook operation
+
+#### Scenario: Authorize conversion through the command
+- **WHEN** a caller supplies `--allow-conversion` for a non-native asset with an available explicit converter
+- **THEN** the command may validate and use that converter for the selected agent and operation
+
+#### Scenario: Keep CLI dependencies isolated
+- **WHEN** the optional CLI package imports the library lifecycle
+- **THEN** CLI dependencies remain confined to the CLI package and no core or utility module imports them
+
+#### Scenario: Prepare assets before installing an agent executable
+- **WHEN** a valid lifecycle request selects an agent whose executable is absent
+- **THEN** the command performs the filesystem lifecycle without rejecting the request for that absence
+
+#### Scenario: Reject multiple command agents
+- **WHEN** a caller supplies more than one agent to one command invocation
+- **THEN** the command rejects the request before destination mutation
+
+### Requirement: Explicit noninteractive operation
+Programmatic lifecycle operations SHALL accept explicit agent selection, optional scope selection, any required project root, and all other outcome-changing inputs without requiring an interactive selector or confirmation prompt. Uninstalling an owned asset through the explicit uninstall operation SHALL NOT add a confirmation prompt.
+
+#### Scenario: Run without a terminal
+- **WHEN** a caller provides a complete valid request in a noninteractive environment
+- **THEN** the system completes or rejects the operation without waiting for user input
+
+### Requirement: Explicit command scope
+The command SHALL expose user-global and repository-local lifecycle scopes through `--scope`, defaulting to `user`. A repository-local request SHALL require `--project-root` even when `--destination` is supplied and SHALL resolve native semantics from that root without depending on the process working directory. An unsupported agent, asset, and scope combination SHALL fail deterministically before mutation.
+
+#### Scenario: Use the default command scope
+- **WHEN** a caller omits `--scope` from an otherwise valid command
+- **THEN** the command operates in user-global scope
+
+#### Scenario: Select a project scope through the command
+- **WHEN** a caller supplies `--scope project --project-root <path>` for a natively supported project asset surface
+- **THEN** the command operates on the destination resolved for that agent beneath the supplied repository root
+
+#### Scenario: Omit a required project root
+- **WHEN** a caller selects project scope without `--project-root`
+- **THEN** the command rejects the request as invalid before destination inspection or mutation
+
+### Requirement: Explicit installation destination
+Skill and hook inspection, installation, and uninstallation commands SHALL accept a `--destination` path that replaces the selected agent adapter's normally resolved physical destination for that invocation without changing its semantic scope. The overridden destination SHALL remain subject to the same validation, conflict detection, ownership tracking, idempotence, and mutation-safety requirements as a default destination.
+
+#### Scenario: Install into a custom destination
+- **WHEN** a caller supplies a valid `--destination` path with an otherwise valid installation request
+- **THEN** the system plans and applies the managed installation at that path instead of the selected agent's default destination
+
+#### Scenario: Reject a conflicting custom destination
+- **WHEN** the supplied `--destination` contains unmanaged or modified state that conflicts with the intended installation
+- **THEN** the system rejects the installation without overwriting the conflicting content
+
+#### Scenario: Inspect a custom destination
+- **WHEN** a caller supplies `--destination` to an inspect command
+- **THEN** the system reports compatibility and relevant state at that exact destination without mutation
+
+#### Scenario: Uninstall from a custom destination
+- **WHEN** a caller supplies an asset name and `--destination` to an uninstall command
+- **THEN** the system removes only an intact projection installed and owned by `agent-router` at that destination
+
+### Requirement: Deterministic process outcome
+The command SHALL emit human-readable output by default and a stable JSON result envelope when `--json` is supplied. Results SHALL be written to standard output, diagnostics SHALL be written to standard error, and expected domain errors SHALL NOT expose implementation tracebacks. The command SHALL exit with status `0` for success or an already-converged no-op, `2` for invalid or unsupported requests, `3` for ownership or destination conflicts, and `1` for unexpected operational failures.
+
+#### Scenario: Report a managed-state conflict
+- **WHEN** an operation detects an unmanaged or modified destination conflict
+- **THEN** the command exits with status `3` and identifies the selected agent and conflicting destination without changing the affected destination
+
+#### Scenario: Emit a JSON result
+- **WHEN** a caller supplies `--json` to a lifecycle command
+- **THEN** the command writes one stable structured result envelope to standard output and keeps diagnostics on standard error
