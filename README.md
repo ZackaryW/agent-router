@@ -5,18 +5,23 @@ native hooks for Codex, Claude Code, Kimi Code CLI, and Pi.
 
 It is an importable library first. The Typer CLI is optional.
 
-## Install
+## Install from GitHub
+
+`agent-router` is installed directly from its GitHub repository; it is not
+published to a package index.
 
 ```console
-uv add agent-router
-uv add "agent-router[cli]"
+uv add "agent-router @ git+https://github.com/ZackaryW/agent-router.git"
+uv add "agent-router[cli] @ git+https://github.com/ZackaryW/agent-router.git"
 ```
 
 Run the CLI without installing it into a project:
 
 ```console
-uvx --from "agent-router[cli]" agent-router --help
+uvx --from "agent-router[cli] @ git+https://github.com/ZackaryW/agent-router.git" agent-router --help
 ```
+
+Use `@<tag-or-commit>` after `.git` to pin a release or revision.
 
 ## Python
 

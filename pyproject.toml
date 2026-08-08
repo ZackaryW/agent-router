@@ -12,6 +12,9 @@ dependencies = [
     "tomlkit>=0.15.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/ZackaryW/agent-router"
+
 [project.optional-dependencies]
 cli = ["typer>=0.27.0"]
 

@@ -4,8 +4,10 @@ import builtins
 import json
 import subprocess
 import sys
+import tomllib
 from contextlib import redirect_stderr
 from io import StringIO
+from pathlib import Path
 
 from behave import given, then, when
 from typer.testing import CliRunner
@@ -35,6 +37,42 @@ def given_project_root(context) -> None:
 @given("the base distribution is installed without the cli extra")
 def given_base_distribution(context) -> None:
     context.base_only = True
+
+
+@given("the supported distribution files")
+def given_distribution_files(context) -> None:
+    context.repository = Path(__file__).resolve().parents[3]
+
+
+@when("I inspect the installation contract")
+def inspect_installation_contract(context) -> None:
+    context.readme = (context.repository / "README.md").read_text(encoding="utf-8")
+    with (context.repository / "pyproject.toml").open("rb") as source:
+        context.project_metadata = tomllib.load(source)
+
+
+@then("base and CLI installations source agent-router from GitHub")
+def github_installation_sources(context) -> None:
+    source = "git+https://github.com/ZackaryW/agent-router.git"
+    assert f'agent-router @ {source}' in context.readme
+    assert f'agent-router[cli] @ {source}' in context.readme
+
+
+@then("no package-index installation is offered")
+def no_index_installation(context) -> None:
+    assert "uv add agent-router\n" not in context.readme
+    assert 'uv add "agent-router[cli]"' not in context.readme
+
+
+@then("Git builds retain library and CLI metadata")
+def git_build_metadata(context) -> None:
+    metadata = context.project_metadata
+    assert metadata["project"]["urls"]["Repository"] == (
+        "https://github.com/ZackaryW/agent-router"
+    )
+    assert metadata["project"]["optional-dependencies"]["cli"]
+    assert metadata["project"]["scripts"]["agent-router"]
+    assert metadata["build-system"]["build-backend"]
 
 
 @given("the cli extra is installed")

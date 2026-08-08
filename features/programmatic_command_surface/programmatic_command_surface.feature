@@ -12,6 +12,13 @@ Feature: Use agent-router as a library or optional command
     Then the error tells me to install "agent_router[cli]"
     And no optional dependency traceback is shown
 
+  Scenario: Install only from GitHub
+    Given the supported distribution files
+    When I inspect the installation contract
+    Then base and CLI installations source agent-router from GitHub
+    And no package-index installation is offered
+    And Git builds retain library and CLI metadata
+
   Scenario: Install a skill through the agent-bound library
     Given a valid portable Agent Skill
     When I call AgentRouter for Codex to install the loaded Skill
