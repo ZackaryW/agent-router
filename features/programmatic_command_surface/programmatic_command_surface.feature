@@ -25,6 +25,46 @@ Feature: Use agent-router as a library or optional command
     When I call AgentRouter for Codex to install the loaded Skill
     Then the operation returns a structured Codex lifecycle result
 
+  Scenario: Use plugin and artifact contracts without CLI dependencies
+    Given the base distribution is installed without the cli extra
+    When I construct an agent-bound router with an AgentEnvironment and an artifact extension
+    Then PluginRef, ArtifactManifest, policy, status, discovery, resolution, and lifecycle contracts are available
+    And Typer is not imported
+
+  Scenario Outline: Expose plugin commands through the public lifecycle
+    Given the cli extra is installed
+    When I invoke "agent-router plugin <operation>" with one explicit agent
+    Then the request is handled through the public agent-bound library
+    And no interactive agent selection is required
+
+    Examples:
+      | operation       |
+      | discover        |
+      | install         |
+      | update          |
+      | remove          |
+      | artifact status |
+      | artifact set    |
+
+  Scenario: Keep available plugin discovery explicit
+    Given the cli extra is installed
+    When I invoke plugin discovery with and without "--available"
+    Then the default result contains installed plugins only
+    And the explicit result may include configured native catalog entries
+
+  Scenario: Query and set generic artifact policy
+    Given a scoped PluginRef and a registered artifact identifier
+    When I query status and set inherit, enabled, or disabled through the library or CLI
+    Then the result reports requested policy, effective status, reason, and canonical absolute paths
+    And native plugin enablement is unchanged
+
+  Scenario: Isolate complete plugin adapter state
+    Given an explicit plugin destination and equivalent AgentEnvironment
+    When I discover, mutate, or resolve artifacts for the selected agent
+    Then native adapter paths, ownership receipts, and artifact policies use only the isolated root
+    And default agent and router state are neither read nor written
+    And the destination is not treated as an arbitrary plugin runtime directory
+
   Scenario Outline: Expose each command lifecycle
     Given the cli extra is installed
     When I invoke "agent-router <kind> <operation>" with one explicit agent
