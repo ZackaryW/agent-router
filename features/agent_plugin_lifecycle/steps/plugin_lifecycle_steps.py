@@ -181,7 +181,7 @@ def native_policy_authoritative(context) -> None:
 def direct_source(context, source: str) -> None:
     values = {
         "URL": "https://example.test/plugin.zip",
-        "Git ref": "git:github.com/team/plugin",
+        "Git ref": "git@github.com:team/plugin",
         "local path": "./local-plugin",
     }
     context.native = FakeNativeManager(context.destination)

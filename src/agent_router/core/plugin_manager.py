@@ -334,7 +334,22 @@ class PluginManager:
     def _is_direct(self, ref: PluginRef) -> bool:
         value = ref.native_ref
         return (
-            value.startswith(("http://", "https://", "git:", "ssh://", "./", "../"))
+            value.startswith(
+                (
+                    "http://",
+                    "https://",
+                    "git:",
+                    "git@",
+                    "ssh://",
+                    "file://",
+                    "./",
+                    "../",
+                    ".\\",
+                    "..\\",
+                    "~/",
+                    "~\\",
+                )
+            )
             or Path(value).is_absolute()
             or value.endswith(".git")
         )
