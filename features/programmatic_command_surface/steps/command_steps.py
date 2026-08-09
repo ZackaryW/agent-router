@@ -698,6 +698,10 @@ def isolated_paths(context) -> None:
         ] == str(context.destination.resolve())
         for request in context.native.calls
     ), [(request.argv, request.environment.get("CLAUDE_CONFIG_DIR")) for request in context.native.calls]
+    assert all(
+        request.cwd == context.destination.resolve()
+        for request in context.native.calls
+    )
 
 
 @then("default agent and router state are neither read nor written")

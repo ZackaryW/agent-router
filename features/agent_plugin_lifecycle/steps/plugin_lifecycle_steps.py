@@ -54,6 +54,7 @@ def selected_manager_invoked(context, agent: str) -> None:
 def installed_verified(context) -> None:
     assert context.error is None
     assert context.result.status == "installed"
+    assert context.result.verified
     assert context.result.after is not None and context.result.after.installed
     assert sum("list" in call.argv for call in context.native.calls) >= 2
 
@@ -358,6 +359,7 @@ def no_false_convergence(context) -> None:
 @then("its outcome identifies the unverified resulting state")
 def unverified_outcome(context) -> None:
     assert context.result.status == "indeterminate"
+    assert not context.result.verified
 
 
 @given("the native manager may have changed state before authoritative rediscovery fails")

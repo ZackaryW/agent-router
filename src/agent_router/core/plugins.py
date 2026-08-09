@@ -35,7 +35,11 @@ class AgentEnvironment:
 
     def __post_init__(self) -> None:
         root = Path(self.root).resolve()
-        project = Path(self.project_root).resolve() if self.project_root is not None else None
+        project = (
+            Path(self.project_root).resolve()
+            if self.project_root is not None
+            else root
+        )
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "project_root", project)
 
@@ -142,12 +146,17 @@ class PluginLifecycleResult:
     def changed(self) -> bool:
         return self.status in {"installed", "updated", "removed"}
 
+    @property
+    def verified(self) -> bool:
+        return self.status in {"installed", "updated", "removed", "no-op"}
+
     def to_dict(self) -> dict[str, object]:
         return {
             "operation": self.operation,
             "ref": self.ref.to_dict(),
             "status": self.status,
             "changed": self.changed,
+            "verified": self.verified,
             "before": self.before.to_dict() if self.before else None,
             "after": self.after.to_dict() if self.after else None,
         }

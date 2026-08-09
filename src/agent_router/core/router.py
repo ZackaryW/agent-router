@@ -70,7 +70,7 @@ class AgentRouter:
     ) -> None:
         self.agent = Agent(agent)
         self.home = Path(home).resolve() if home is not None else Path.home().resolve()
-        self.environment = environment or AgentEnvironment(self.home)
+        self.environment = environment or AgentEnvironment(self.home, Path.cwd())
         self._plugins = PluginManager(
             self.agent, self.environment, extensions, process_runner
         )
