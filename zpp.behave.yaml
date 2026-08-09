@@ -38,6 +38,41 @@ commands:
           - src/agent_router/utils/mutation.py
           - src/agent_router/utils/native_hooks.py
           - src/agent_router/utils/ownership.py
+      plugin-discovery:
+        value: features/agent_plugin_discovery
+        paths:
+          - features/agent_plugin_discovery/**
+          - features/support/**
+          - scripts/run_behave_roots.py
+          - pyproject.toml
+          - uv.lock
+          - zpp.behave.yaml
+          - src/agent_router/__init__.py
+          - src/agent_router/core/models.py
+          - src/agent_router/core/plugin_manager.py
+          - src/agent_router/core/plugins.py
+          - src/agent_router/core/router.py
+          - src/agent_router/utils/artifact_paths.py
+          - src/agent_router/utils/plugin_evidence.py
+          - src/agent_router/utils/plugin_state.py
+          - src/agent_router/utils/process.py
+      plugin-lifecycle:
+        value: features/agent_plugin_lifecycle
+        paths:
+          - features/agent_plugin_lifecycle/**
+          - features/support/**
+          - scripts/run_behave_roots.py
+          - pyproject.toml
+          - uv.lock
+          - zpp.behave.yaml
+          - src/agent_router/__init__.py
+          - src/agent_router/core/models.py
+          - src/agent_router/core/plugin_manager.py
+          - src/agent_router/core/plugins.py
+          - src/agent_router/core/router.py
+          - src/agent_router/utils/plugin_evidence.py
+          - src/agent_router/utils/plugin_state.py
+          - src/agent_router/utils/process.py
       command:
         value: features/programmatic_command_surface
         paths:
@@ -58,6 +93,12 @@ commands:
         paths: ["**"]
       hooks:
         value: features/agent_hook_lifecycle
+        paths: ["**"]
+      plugin-discovery:
+        value: features/agent_plugin_discovery
+        paths: ["**"]
+      plugin-lifecycle:
+        value: features/agent_plugin_lifecycle
         paths: ["**"]
       command:
         value: features/programmatic_command_surface

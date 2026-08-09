@@ -16,12 +16,14 @@ from agent_router import (
     Scope,
     Skill,
 )
+from agent_router.cli.plugins import plugin_app
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
 skill_app = typer.Typer(no_args_is_help=True)
 hook_app = typer.Typer(no_args_is_help=True)
 app.add_typer(skill_app, name="skill")
 app.add_typer(hook_app, name="hook")
+app.add_typer(plugin_app, name="plugin")
 
 AgentOption = Annotated[list[Agent], typer.Option("--agent")]
 ScopeOption = Annotated[Scope, typer.Option("--scope")]

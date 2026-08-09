@@ -14,6 +14,16 @@ from agent_router.core.models import (
     UnsupportedAssetError,
     UnsupportedScopeError,
 )
+from agent_router.core.plugin_manager import PluginManager
+from agent_router.core.plugins import (
+    AgentEnvironment,
+    ArtifactExtension,
+    ArtifactPolicy,
+    ArtifactStatus,
+    PluginLifecycleResult,
+    PluginRecord,
+    PluginRef,
+)
 from agent_router.utils.assets import (
     AssetError,
     AssetFile,
@@ -45,12 +55,57 @@ from agent_router.utils.ownership import (
     ownership_path,
     serialize_ownership,
 )
+from agent_router.utils.process import ProcessRunner, run_process
 
 
 class AgentRouter:
-    def __init__(self, agent: Agent, *, home: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        *,
+        home: str | Path | None = None,
+        environment: AgentEnvironment | None = None,
+        extensions: tuple[ArtifactExtension, ...] = (),
+        process_runner: ProcessRunner = run_process,
+    ) -> None:
         self.agent = Agent(agent)
         self.home = Path(home).resolve() if home is not None else Path.home().resolve()
+        self.environment = environment or AgentEnvironment(self.home)
+        self._plugins = PluginManager(
+            self.agent, self.environment, extensions, process_runner
+        )
+
+    def discover_plugins(
+        self, *, include_available: bool = False
+    ) -> tuple[PluginRecord, ...]:
+        return self._plugins.discover(include_available=include_available)
+
+    def install_plugin(
+        self, ref: PluginRef, *, trust: bool = False
+    ) -> PluginLifecycleResult:
+        return self._plugins.install(ref, trust=trust)
+
+    def update_plugin(self, ref: PluginRef) -> PluginLifecycleResult:
+        return self._plugins.update(ref)
+
+    def remove_plugin(self, ref: PluginRef) -> PluginLifecycleResult:
+        return self._plugins.remove(ref)
+
+    def resolve_artifacts(self, identifier: str) -> tuple[ArtifactStatus, ...]:
+        return self._plugins.resolve_artifacts(identifier)
+
+    def artifact_status(self, ref: PluginRef, identifier: str) -> ArtifactStatus:
+        return self._plugins.artifact_status(ref, identifier)
+
+    def set_artifact_policy(
+        self, ref: PluginRef, identifier: str, policy: ArtifactPolicy
+    ) -> ArtifactStatus:
+        return self._plugins.set_artifact_policy(ref, identifier, policy)
+
+    def clear_artifact_policy(
+        self, ref: PluginRef, identifier: str
+    ) -> ArtifactStatus:
+        return self._plugins.clear_artifact_policy(ref, identifier)
 
     def inspect_skill(
         self,

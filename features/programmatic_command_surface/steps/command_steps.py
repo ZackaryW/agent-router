@@ -12,8 +12,20 @@ from pathlib import Path
 from behave import given, then, when
 from typer.testing import CliRunner
 
-from agent_router import Agent, AgentRouter, AgentRouterError, Scope, Skill
+from agent_router import (
+    Agent,
+    AgentEnvironment,
+    AgentRouter,
+    AgentRouterError,
+    ArtifactEffectiveState,
+    ArtifactManifest,
+    ArtifactPolicy,
+    PluginRef,
+    Scope,
+    Skill,
+)
 from agent_router.cli.app import app
+import agent_router.cli.plugins as plugin_cli
 from features.support.lifecycle import (
     capture as _capture,
     router as _router,
@@ -21,6 +33,13 @@ from features.support.lifecycle import (
     write_kimi_hook as _write_kimi_hook,
     write_skill as _write_skill,
 )
+from features.support.plugins import (
+    FakeNativeManager,
+    PathArtifactExtension,
+    plugin_router,
+    ref as plugin_ref,
+)
+from pathlib import PurePath
 
 
 @given("a valid portable Agent Skill")
@@ -188,8 +207,7 @@ def library_install_skill(context) -> None:
     )
 
 
-@when('I invoke "agent-router {kind} {operation}" with one explicit agent')
-def invoke_lifecycle_command(context, kind: str, operation: str) -> None:
+def _invoke_lifecycle_command(context, kind: str, operation: str) -> None:
     runner = context.runner
     destination = context.root / f"cli-{kind}-{operation}"
     if kind == "skill":
@@ -219,6 +237,16 @@ def invoke_lifecycle_command(context, kind: str, operation: str) -> None:
         base.append(str(source))
     base.extend(["--agent", "codex", "--destination", str(destination)])
     context.cli_result = runner.invoke(app, base)
+
+
+@when('I invoke "agent-router skill {operation}" with one explicit agent')
+def invoke_skill_lifecycle_command(context, operation: str) -> None:
+    _invoke_lifecycle_command(context, "skill", operation)
+
+
+@when('I invoke "agent-router hook {operation}" with one explicit agent')
+def invoke_hook_lifecycle_command(context, operation: str) -> None:
+    _invoke_lifecycle_command(context, "hook", operation)
 
 
 @when("I invoke a valid filesystem lifecycle command")
@@ -365,11 +393,21 @@ def structured_codex_result(context) -> None:
 
 
 @then("the request is handled through the public library lifecycle")
+@then("the request is handled through the public agent-bound library")
 def command_uses_lifecycle(context) -> None:
     assert context.cli_result.exit_code == 0, context.cli_result.output
     assert any(
         status in context.cli_result.output
-        for status in ("absent", "installed", "removed")
+        for status in (
+            "absent",
+            "installed",
+            "updated",
+            "removed",
+            "no-op",
+            "active",
+            "inactive",
+            "plugin record",
+        )
     )
 
 
@@ -421,3 +459,253 @@ def process_status(context, status: int) -> None:
 @then("expected domain errors do not show implementation tracebacks")
 def no_domain_traceback(context) -> None:
     assert "Traceback" not in context.cli_result.output
+
+
+@when("I construct an agent-bound router with an AgentEnvironment and an artifact extension")
+def construct_plugin_library_without_cli(context) -> None:
+    script = """
+import builtins
+from pathlib import Path, PurePath
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name == 'typer':
+        raise ModuleNotFoundError('blocked typer')
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+from agent_router import Agent, AgentEnvironment, AgentRouter, ArtifactManifest, ArtifactPolicy, PluginRef
+class Extension:
+    manifest = ArtifactManifest('zpp.traits', '1')
+    def locate(self, context): return (PurePath('traits'),)
+environment = AgentEnvironment(Path.cwd())
+router = AgentRouter(Agent.CODEX, environment=environment, extensions=(Extension(),))
+ref = PluginRef(Agent.CODEX, 'review@configured', 'user', 'configured')
+assert ArtifactPolicy.INHERIT.value == 'inherit'
+"""
+    context.import_process = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+
+
+@then("PluginRef, ArtifactManifest, policy, status, discovery, resolution, and lifecycle contracts are available")
+def plugin_contracts_available(context) -> None:
+    assert context.import_process.returncode == 0, context.import_process.stderr
+
+
+@then("Typer is not imported")
+def typer_not_imported(context) -> None:
+    assert context.import_process.returncode == 0, context.import_process.stderr
+
+
+def _invoke_plugin_cli(context, args: list[str], *, artifact: bool = False) -> None:
+    context.native = getattr(context, "native", FakeNativeManager(context.destination))
+    extensions = ()
+    if artifact:
+        plugin = context.native.installed[0] if context.native.installed else context.native.add()
+        path = plugin.root / "traits" / "item"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("item", encoding="utf-8")
+        extensions = (
+            PathArtifactExtension(
+                ArtifactManifest("zpp.traits", "1"), PurePath("traits/item")
+            ),
+        )
+
+    def factory(agent, **kwargs):
+        del kwargs
+        return AgentRouter(
+            agent,
+            environment=AgentEnvironment(context.destination),
+            extensions=extensions,
+            process_runner=context.native,
+        )
+
+    original = plugin_cli.AgentRouter
+    plugin_cli.AgentRouter = factory
+    try:
+        context.cli_result = context.runner.invoke(app, args)
+    finally:
+        plugin_cli.AgentRouter = original
+
+
+@when('I invoke "agent-router plugin {operation}" with one explicit agent')
+def invoke_plugin_command(context, operation: str) -> None:
+    context.destination = context.root / f"plugin-{operation.replace(' ', '-')}"
+    context.native = FakeNativeManager(context.destination)
+    selected = plugin_ref(Agent.CLAUDE)
+    base = ["plugin"]
+    artifact = operation.startswith("artifact ")
+    if operation == "discover":
+        args = base + ["discover"]
+    elif operation == "install":
+        args = base + ["install", selected.native_ref]
+    elif operation in {"update", "remove"}:
+        setup = plugin_router(context, Agent.CLAUDE)
+        setup.install_plugin(selected)
+        context.native.calls.clear()
+        args = base + [operation, selected.native_ref]
+    elif operation == "artifact status":
+        context.native.add()
+        args = base + ["artifact", "status", selected.native_ref, "zpp.traits"]
+    else:
+        context.native.add()
+        args = base + [
+            "artifact",
+            "set",
+            selected.native_ref,
+            "zpp.traits",
+            "disabled",
+        ]
+    args.extend(
+        ["--agent", "claude", "--destination", str(context.destination)]
+    )
+    _invoke_plugin_cli(context, args, artifact=artifact)
+
+
+@then("no interactive agent selection is required")
+def no_agent_selection(context) -> None:
+    assert context.cli_result.exit_code == 0, context.cli_result.output
+
+
+@when('I invoke plugin discovery with and without "--available"')
+def invoke_plugin_discovery_modes(context) -> None:
+    context.destination = context.root / "plugin-discovery"
+    context.native = FakeNativeManager(context.destination)
+    context.native.add()
+    available = context.native.add("available@configured")
+    context.native.installed.remove(available)
+    context.native.available.append(available)
+    common = [
+        "plugin",
+        "discover",
+        "--agent",
+        "claude",
+        "--destination",
+        str(context.destination),
+        "--json",
+    ]
+    _invoke_plugin_cli(context, common)
+    context.default_discovery = json.loads(context.cli_result.stdout)["result"]
+    _invoke_plugin_cli(context, common + ["--available"])
+    context.available_discovery = json.loads(context.cli_result.stdout)["result"]
+
+
+@then("the default result contains installed plugins only")
+def default_installed_only(context) -> None:
+    assert context.default_discovery
+    assert all(item["installed"] for item in context.default_discovery)
+
+
+@then("the explicit result may include configured native catalog entries")
+def available_included(context) -> None:
+    assert any(not item["installed"] for item in context.available_discovery)
+
+
+@given("a scoped PluginRef and a registered artifact identifier")
+def scoped_artifact_ref(context) -> None:
+    context.destination = context.root / "artifact-policy"
+    context.native = FakeNativeManager(context.destination)
+    plugin = context.native.add(scope="project")
+    artifact = plugin.root / "traits" / "item"
+    artifact.parent.mkdir()
+    artifact.write_text("item", encoding="utf-8")
+    context.extension = PathArtifactExtension(
+        ArtifactManifest("zpp.traits", "1"), PurePath("traits/item")
+    )
+    context.plugin_ref = plugin_ref(Agent.CLAUDE, scope="project")
+    context.plugin_router = plugin_router(
+        context, Agent.CLAUDE, extensions=(context.extension,)
+    )
+
+
+@when("I query status and set inherit, enabled, or disabled through the library or CLI")
+def query_and_set_policies(context) -> None:
+    context.statuses = [
+        context.plugin_router.artifact_status(context.plugin_ref, "zpp.traits")
+    ]
+    for policy in (
+        ArtifactPolicy.ENABLED,
+        ArtifactPolicy.DISABLED,
+        ArtifactPolicy.INHERIT,
+    ):
+        context.statuses.append(
+            context.plugin_router.set_artifact_policy(
+                context.plugin_ref, "zpp.traits", policy
+            )
+        )
+
+
+@then("the result reports requested policy, effective status, reason, and canonical absolute paths")
+def complete_artifact_status(context) -> None:
+    assert {status.policy for status in context.statuses} >= {
+        ArtifactPolicy.INHERIT,
+        ArtifactPolicy.ENABLED,
+        ArtifactPolicy.DISABLED,
+    }
+    assert all(status.reason for status in context.statuses)
+    assert context.statuses[0].effective is ArtifactEffectiveState.ACTIVE
+    assert context.statuses[0].paths[0].is_absolute()
+
+
+@then("native plugin enablement is unchanged")
+def native_enablement_unchanged(context) -> None:
+    assert context.native.installed[0].enabled
+
+
+@given("an explicit plugin destination and equivalent AgentEnvironment")
+def explicit_plugin_environment(context) -> None:
+    context.default_sentinel = context.home / "plugins" / "sentinel"
+    context.default_sentinel.parent.mkdir(parents=True)
+    context.default_sentinel.write_text("unchanged", encoding="utf-8")
+    context.destination = context.root / "isolated-agent"
+    context.native = FakeNativeManager(context.destination)
+    context.environment = AgentEnvironment(context.destination)
+    context.extension = PathArtifactExtension(
+        ArtifactManifest("zpp.traits", "1"), PurePath("traits/item")
+    )
+    context.plugin_router = AgentRouter(
+        Agent.CLAUDE,
+        environment=context.environment,
+        extensions=(context.extension,),
+        process_runner=context.native,
+    )
+    context.plugin_ref = plugin_ref(Agent.CLAUDE)
+
+
+@when("I discover, mutate, or resolve artifacts for the selected agent")
+def use_isolated_environment(context) -> None:
+    context.plugin_router.discover_plugins()
+    context.lifecycle = context.plugin_router.install_plugin(context.plugin_ref)
+    plugin = context.native.installed[0]
+    artifact = plugin.root / "traits" / "item"
+    artifact.parent.mkdir()
+    artifact.write_text("item", encoding="utf-8")
+    (context.artifact_status_result,) = context.plugin_router.resolve_artifacts(
+        "zpp.traits"
+    )
+
+
+@then("native adapter paths, ownership receipts, and artifact policies use only the isolated root")
+def isolated_paths(context) -> None:
+    assert context.lifecycle.after.runtime_root.is_relative_to(
+        context.destination.resolve()
+    ), (context.lifecycle.after.runtime_root, context.destination.resolve())
+    assert context.artifact_status_result.paths[0].is_relative_to(
+        context.destination.resolve()
+    ), (context.artifact_status_result.paths, context.destination.resolve())
+    assert all(
+        request.environment[
+            "CLAUDE_CONFIG_DIR"
+        ] == str(context.destination.resolve())
+        for request in context.native.calls
+    ), [(request.argv, request.environment.get("CLAUDE_CONFIG_DIR")) for request in context.native.calls]
+
+
+@then("default agent and router state are neither read nor written")
+def default_state_untouched(context) -> None:
+    assert context.default_sentinel.read_text(encoding="utf-8") == "unchanged"
+    assert not (context.home / ".agent-router").exists()
+
+
+@then("the destination is not treated as an arbitrary plugin runtime directory")
+def destination_is_environment(context) -> None:
+    assert context.lifecycle.after.runtime_root != context.destination.resolve()
