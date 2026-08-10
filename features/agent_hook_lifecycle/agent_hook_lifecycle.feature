@@ -114,3 +114,55 @@ Feature: Manage agent hooks
     Given a valid native Claude hook artifact
     When I request one hook operation for Codex and Claude
     Then the request is rejected before destination mutation
+
+  Scenario Outline: Replace one exact declared hook predecessor
+    Given an exact native <agent> predecessor is present for a current hook
+    And unrelated native configuration exists beside it
+    When I install the current hook with that predecessor declared
+    Then only the exact predecessor is removed
+    And the current hook and its ownership evidence are installed atomically
+    And the result reports a legacy-replaced transition without source conversion
+    And unrelated native configuration is unchanged
+
+    Examples:
+      | agent  |
+      | claude |
+      | codex  |
+      | kimi   |
+      | pi     |
+
+  Scenario: Prune an exact predecessor beside the current owned hook
+    Given a current owned hook and one exact declared predecessor coexist
+    When I install the current hook with that predecessor declared
+    Then the current hook and its ownership evidence are retained
+    And only the exact predecessor is removed
+    And the result reports a legacy-pruned transition
+
+  Scenario: Restore a wholly missing owned hook
+    Given valid ownership identifies a hook whose complete native projection is absent
+    And no recognized hook structure overlaps ambiguously
+    When I explicitly install the current hook
+    Then the current hook is restored without changing unrelated configuration
+    And the result reports an owned-restored transition
+
+  Scenario: Remove stale ownership for a wholly missing hook
+    Given valid ownership identifies a hook whose complete native projection is absent
+    And no recognized hook structure overlaps ambiguously
+    When I uninstall the hook by name
+    Then only the stale ownership evidence is removed
+    And the absent hook is not recreated
+    And the result reports an owned-removed transition
+
+  Scenario Outline: Reject ambiguous predecessor reconciliation
+    Given declared predecessor evidence is <state>
+    When I inspect or install the current hook
+    Then the operation reports a conflict before mutation
+    And no native content is claimed from a command prefix, filename, event alone, or destination
+
+    Examples:
+      | state                              |
+      | partially present                  |
+      | duplicated                         |
+      | placed under the wrong native group |
+      | present for more than one predecessor |
+      | changed beneath an exact matcher   |

@@ -113,6 +113,19 @@ Feature: Use agent-router as a library or optional command
     Then one stable result envelope is written to standard output
     And diagnostics are written only to standard error
 
+  Scenario: Supply exact predecessors through the hook lifecycle
+    Given a current hook and zero or more exact native predecessor hooks
+    When I inspect or install through the agent-bound library or repeatable hook predecessor command options
+    Then every predecessor is validated for the selected agent and semantic scope
+    And hook inspect and install receive the same immutable predecessor sequence
+    And skill lifecycle and hook uninstall expose no predecessor input
+
+  Scenario: Report hook transitions independently of source conversion
+    Given a hook operation reconciles an exact predecessor or wholly missing owned projection
+    When its structured lifecycle result is returned or serialized
+    Then the result contains the applicable hook transition
+    And converted continues to describe only authorized cross-agent source conversion
+
   Scenario Outline: Return deterministic process status
     Given a command resulting in <outcome>
     When the command exits
