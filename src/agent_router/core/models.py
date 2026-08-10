@@ -22,6 +22,13 @@ class AssetKind(StrEnum):
     HOOK = "hook"
 
 
+class HookTransition(StrEnum):
+    LEGACY_REPLACED = "legacy-replaced"
+    LEGACY_PRUNED = "legacy-pruned"
+    OWNED_RESTORED = "owned-restored"
+    OWNED_REMOVED = "owned-removed"
+
+
 class AgentRouterError(Exception):
     exit_status = 2
 
@@ -53,6 +60,7 @@ class LifecycleResult:
     status: str
     compatible_agents: tuple[Agent, ...] = ()
     converted: bool = False
+    hook_transition: HookTransition | None = None
 
     @property
     def changed(self) -> bool:
@@ -70,4 +78,7 @@ class LifecycleResult:
             "changed": self.changed,
             "compatible_agents": [agent.value for agent in self.compatible_agents],
             "converted": self.converted,
+            "hook_transition": (
+                self.hook_transition.value if self.hook_transition is not None else None
+            ),
         }

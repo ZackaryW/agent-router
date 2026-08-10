@@ -3,10 +3,13 @@ from copy import deepcopy
 import pytest
 
 from agent_router.utils.native_hooks import (
+    HookFragmentState,
     HookDocumentError,
     convert_portable_command_hooks,
     parse_json_hook_source,
     parse_kimi_hook_source,
+    probe_json_hooks,
+    probe_kimi_hooks,
     reconcile_json_hooks,
     reconcile_kimi_hooks,
     remove_json_hooks,
@@ -160,3 +163,99 @@ def test_rejects_nonportable_conversion_content(source: dict[str, object]) -> No
 def test_rejects_conversion_to_a_non_json_agent() -> None:
     with pytest.raises(HookDocumentError, match="Claude Code and Codex"):
         convert_portable_command_hooks({"hooks": FRAGMENT}, "kimi")
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        ({"hooks": FRAGMENT}, HookFragmentState.PRESENT),
+        (
+            {"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": []}]}},
+            HookFragmentState.ABSENT,
+        ),
+        (
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [{"type": "command", "command": "changed"}],
+                        }
+                    ]
+                }
+            },
+            HookFragmentState.CONFLICT,
+        ),
+        (
+            {"hooks": {"PreToolUse": FRAGMENT["PreToolUse"] * 2}},
+            HookFragmentState.CONFLICT,
+        ),
+        (
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "check",
+                                    "timeout": 5,
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            HookFragmentState.CONFLICT,
+        ),
+        (
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Read",
+                            "hooks": [{"type": "command", "command": "other"}],
+                        }
+                    ]
+                }
+            },
+            HookFragmentState.ABSENT,
+        ),
+    ],
+)
+def test_probes_json_hook_fragment_state(
+    document: dict[str, object], expected: HookFragmentState
+) -> None:
+    assert probe_json_hooks(document, FRAGMENT) is expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            b'[[hooks]]\nevent = "PreToolUse"\nmatcher = "shell"\ncommand = "check"\ntimeout = 5\n',
+            HookFragmentState.PRESENT,
+        ),
+        (
+            b'[[hooks]]\nevent = "PreToolUse"\nmatcher = "read"\ncommand = "other"\n',
+            HookFragmentState.ABSENT,
+        ),
+        (
+            b'[[hooks]]\nevent = "PreToolUse"\nmatcher = "shell"\ncommand = "changed"\n',
+            HookFragmentState.CONFLICT,
+        ),
+        (
+            b'[[hooks]]\nevent = "PreToolUse"\nmatcher = "shell"\ncommand = "check"\ntimeout = 5\n\n'
+            b'[[hooks]]\nevent = "PreToolUse"\nmatcher = "shell"\ncommand = "check"\ntimeout = 5\n',
+            HookFragmentState.CONFLICT,
+        ),
+        (
+            b'[[hooks]]\nevent = "SessionStart"\ncommand = "check"\ntimeout = 5\n',
+            HookFragmentState.CONFLICT,
+        ),
+    ],
+)
+def test_probes_kimi_hook_fragment_state(
+    source: bytes, expected: HookFragmentState
+) -> None:
+    assert probe_kimi_hooks(source, KIMI_FRAGMENT) is expected

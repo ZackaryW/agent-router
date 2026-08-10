@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from copy import deepcopy
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,12 @@ _PORTABLE_EVENTS = {
 
 class HookDocumentError(ValueError):
     """A native hook document cannot be reconciled without loss."""
+
+
+class HookFragmentState(StrEnum):
+    PRESENT = "present"
+    ABSENT = "absent"
+    CONFLICT = "conflict"
 
 
 def parse_json_hook_source(source: bytes) -> JsonHookFragment:
@@ -72,6 +79,58 @@ def reconcile_json_hooks(
                 groups.append(deepcopy(group))
     result["hooks"] = current
     return result
+
+
+def probe_json_hooks(
+    document: Mapping[str, Any] | None,
+    fragment: Mapping[str, list[JsonObject]],
+) -> HookFragmentState:
+    expected = _validated_json_hooks(fragment)
+    current = _validated_json_hooks(
+        document.get("hooks", {}) if document is not None else {}
+    )
+    expected_count = sum(len(groups) for groups in expected.values())
+    exact_count = 0
+    expected_commands = {
+        command
+        for groups in expected.values()
+        for group in groups
+        for handler in group["hooks"]
+        if isinstance((command := handler.get("command")), str)
+    }
+
+    for event, expected_groups in expected.items():
+        groups = current.get(event, [])
+        for group in expected_groups:
+            count = groups.count(group)
+            if count > 1:
+                return HookFragmentState.CONFLICT
+            exact_count += count
+
+    for event, groups in current.items():
+        expected_groups = expected.get(event, [])
+        for group in groups:
+            if group in expected_groups:
+                continue
+            commands = {
+                command
+                for handler in group["hooks"]
+                if isinstance((command := handler.get("command")), str)
+            }
+            if commands.intersection(expected_commands):
+                return HookFragmentState.CONFLICT
+            matcher = group.get("matcher")
+            if isinstance(matcher, str) and matcher and any(
+                expected_group.get("matcher") == matcher
+                for expected_group in expected_groups
+            ):
+                return HookFragmentState.CONFLICT
+
+    if exact_count == expected_count:
+        return HookFragmentState.PRESENT
+    if exact_count:
+        return HookFragmentState.CONFLICT
+    return HookFragmentState.ABSENT
 
 
 def remove_json_hooks(
@@ -126,6 +185,46 @@ def reconcile_kimi_hooks(
             hooks.append(table)
             current.append(entry)
     return result
+
+
+def probe_kimi_hooks(
+    source: bytes | TOMLDocument | None,
+    fragment: list[JsonObject],
+) -> HookFragmentState:
+    expected = _validated_kimi_hooks(fragment)
+    document = _toml_document(source)
+    current = _validated_kimi_hooks(document.get("hooks", []))
+    exact_count = 0
+    expected_commands = {
+        command
+        for entry in expected
+        if isinstance((command := entry.get("command")), str)
+    }
+
+    for entry in expected:
+        count = current.count(entry)
+        if count > 1:
+            return HookFragmentState.CONFLICT
+        exact_count += count
+
+    for entry in current:
+        if entry in expected:
+            continue
+        if entry.get("command") in expected_commands:
+            return HookFragmentState.CONFLICT
+        matcher = entry.get("matcher")
+        if isinstance(matcher, str) and matcher and any(
+            candidate.get("event") == entry.get("event")
+            and candidate.get("matcher") == matcher
+            for candidate in expected
+        ):
+            return HookFragmentState.CONFLICT
+
+    if exact_count == len(expected):
+        return HookFragmentState.PRESENT
+    if exact_count:
+        return HookFragmentState.CONFLICT
+    return HookFragmentState.ABSENT
 
 
 def remove_kimi_hooks(
