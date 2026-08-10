@@ -26,7 +26,7 @@ Use `@<tag-or-commit>` after `.git` to pin a release or revision.
 ## Python
 
 ```python
-from agent_router import Agent, AgentRouter, Skill
+from agent_router import Agent, AgentRouter, Hook, Skill
 
 router = AgentRouter(Agent.CODEX)
 skill = Skill.from_path("./reviewer")
@@ -50,6 +50,24 @@ router.install_skill(
 )
 ```
 
+Hook inspection and installation may receive an immutable sequence of exact
+native predecessor artifacts for the same selected agent and semantic scope.
+Agent Router validates those sources and reconciles only an exact predecessor;
+similar or ambiguous native content remains a conflict.
+
+```python
+current = Hook.from_path("./current/reviewer.json")
+predecessor = Hook.from_path("./legacy/reviewer.json")
+
+inspection = router.inspect_hook(current, predecessors=(predecessor,))
+result = router.install_hook(current, predecessors=(predecessor,))
+print(inspection.hook_transition, result.hook_transition)
+```
+
+`hook_transition` independently reports `legacy-replaced`, `legacy-pruned`,
+`owned-restored`, or `owned-removed` when applicable. `converted` continues to
+mean only an authorized cross-agent source conversion.
+
 ## CLI
 
 ```console
@@ -59,6 +77,8 @@ agent-router skill uninstall reviewer --agent codex
 
 agent-router hook inspect ./reviewer.json --agent claude
 agent-router hook install ./reviewer.json --agent claude
+agent-router hook install ./current/reviewer.json --agent claude \
+  --predecessor ./legacy/reviewer.json
 agent-router hook uninstall reviewer --agent claude
 ```
 
@@ -74,6 +94,9 @@ Shared options:
 Install and hook-inspection commands also expose `--allow-conversion`.
 Conversion is off by default and is limited to the portable command-hook subset
 shared by Claude Code and Codex. Skills are never converted.
+
+Hook inspect and install also accept repeatable `--predecessor PATH` options.
+Skill commands and hook uninstall do not accept predecessor input.
 
 `--destination` replaces the resolved physical destination while retaining the
 selected semantic scope. Project scope still requires `--project-root`. This is

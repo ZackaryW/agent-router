@@ -11,6 +11,7 @@ from agent_router import (
     AgentRouterError,
     ConflictError,
     Hook,
+    HookTransition,
     InvalidAssetError,
     Scope,
     UnsupportedAssetError,
@@ -179,6 +180,198 @@ def given_unsafe_hook(context, state: str) -> None:
         context.destination.write_text(json.dumps(document), encoding="utf-8")
 
 
+def _predecessor_fixture(context, agent: Agent = Agent.CLAUDE) -> None:
+    context.agent = agent
+    current_root = context.root / "current"
+    legacy_root = context.root / "legacy"
+    current_root.mkdir(exist_ok=True)
+    legacy_root.mkdir(exist_ok=True)
+    if agent in {Agent.CLAUDE, Agent.CODEX}:
+        current_path = _write_json_hook(current_root)
+        predecessor_path = _write_json_hook(legacy_root)
+        current_path.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "shell",
+                                "hooks": [
+                                    {"type": "command", "command": "current-check"}
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        predecessor_path.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "shell",
+                                "hooks": [
+                                    {"type": "command", "command": "legacy-check"}
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        context.destination = context.root / f"{agent.value}-settings.json"
+        context.destination.write_text(
+            json.dumps(
+                {
+                    "permissions": {"allow": ["Read"]},
+                    "hooks": json.loads(
+                        predecessor_path.read_text(encoding="utf-8")
+                    )["hooks"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        context.current_target = context.destination
+        context.predecessor_target = context.destination
+        context.current = Hook.from_path(current_path, source_agent=agent)
+        context.predecessor = Hook.from_path(predecessor_path, source_agent=agent)
+    elif agent is Agent.KIMI:
+        current_path = _write_kimi_hook(current_root)
+        predecessor_path = _write_kimi_hook(legacy_root)
+        current_path.write_text(
+            '[[hooks]]\nevent = "PreToolUse"\nmatcher = "shell"\ncommand = "current-check"\n',
+            encoding="utf-8",
+        )
+        predecessor_path.write_text(
+            '[[hooks]]\nevent = "PreToolUse"\nmatcher = "shell"\ncommand = "legacy-check"\n',
+            encoding="utf-8",
+        )
+        context.destination = context.root / "kimi-hooks.toml"
+        context.destination.write_text(
+            'theme = "dark"\n\n' + predecessor_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        context.current_target = context.destination
+        context.predecessor_target = context.destination
+        context.current = Hook.from_path(current_path)
+        context.predecessor = Hook.from_path(predecessor_path)
+    else:
+        current_path = _write_pi_hook(current_root)
+        predecessor_path = _write_pi_hook(legacy_root, "legacy-reviewer")
+        current_path.write_text("export default 'current-check'\n", encoding="utf-8")
+        predecessor_path.write_text("export default 'legacy-check'\n", encoding="utf-8")
+        context.destination = context.root / "extensions"
+        context.destination.mkdir()
+        context.predecessor_target = context.destination / predecessor_path.name
+        context.predecessor_target.write_bytes(predecessor_path.read_bytes())
+        (context.destination / "unrelated.ts").write_text(
+            "export default 'unrelated'\n", encoding="utf-8"
+        )
+        context.current_target = context.destination / current_path.name
+        context.current = Hook.from_path(current_path)
+        context.predecessor = Hook.from_path(predecessor_path)
+    context.hook = context.current
+    context.predecessors = (context.predecessor,)
+    context.before_native = context.destination.read_bytes() if context.destination.is_file() else None
+
+
+@given("an exact native {agent} predecessor is present for a current hook")
+def given_exact_predecessor(context, agent: str) -> None:
+    _predecessor_fixture(context, Agent(agent.lower()))
+
+
+@given("unrelated native configuration exists beside it")
+def given_unrelated_predecessor_configuration(context) -> None:
+    if context.agent in {Agent.CLAUDE, Agent.CODEX}:
+        document = json.loads(context.destination.read_text(encoding="utf-8"))
+        assert document["permissions"] == {"allow": ["Read"]}
+    elif context.agent is Agent.KIMI:
+        assert 'theme = "dark"' in context.destination.read_text(encoding="utf-8")
+    else:
+        assert (context.destination / "unrelated.ts").is_file()
+
+
+@given("a current owned hook and one exact declared predecessor coexist")
+def given_current_and_predecessor(context) -> None:
+    _predecessor_fixture(context)
+    context.destination.unlink()
+    router = _router(context, context.agent)
+    router.install_hook(context.current, destination=context.destination)
+    document = json.loads(context.destination.read_text(encoding="utf-8"))
+    legacy_group = json.loads(
+        context.predecessor.path.read_text(encoding="utf-8")
+    )["hooks"]["PreToolUse"][0]
+    document["hooks"]["PreToolUse"].append(legacy_group)
+    context.destination.write_text(json.dumps(document), encoding="utf-8")
+
+
+@given("valid ownership identifies a hook whose complete native projection is absent")
+def given_owned_missing_hook(context) -> None:
+    _predecessor_fixture(context)
+    context.destination.unlink()
+    router = _router(context, context.agent)
+    router.install_hook(context.current, destination=context.destination)
+    document = json.loads(context.destination.read_text(encoding="utf-8"))
+    document["hooks"] = {}
+    document["theme"] = "dark"
+    context.destination.write_text(json.dumps(document), encoding="utf-8")
+    context.predecessors = ()
+
+
+@given("no recognized hook structure overlaps ambiguously")
+def given_no_ambiguous_overlap(context) -> None:
+    assert _router(context, context.agent).inspect_hook(
+        context.current, destination=context.destination
+    ).hook_transition is HookTransition.OWNED_RESTORED
+
+
+@given("declared predecessor evidence is {state}")
+def given_ambiguous_predecessor(context, state: str) -> None:
+    _predecessor_fixture(context)
+    base = {
+        "matcher": "shell",
+        "hooks": [{"type": "command", "command": "legacy-check"}],
+    }
+    if state == "partially present":
+        document = {"hooks": {"PreToolUse": [{"matcher": "shell", "hooks": []}]}}
+    elif state == "duplicated":
+        document = {"hooks": {"PreToolUse": [base, base]}}
+    elif state == "placed under the wrong native group":
+        document = {"hooks": {"SessionStart": [base]}}
+    elif state == "present for more than one predecessor":
+        second_path = context.root / "older" / "reviewer.json"
+        second_path.parent.mkdir()
+        second_group = {
+            "matcher": "write",
+            "hooks": [{"type": "command", "command": "older-check"}],
+        }
+        second_path.write_text(
+            json.dumps({"hooks": {"PreToolUse": [second_group]}}),
+            encoding="utf-8",
+        )
+        context.predecessors = context.predecessors + (
+            Hook.from_path(second_path, source_agent=Agent.CLAUDE),
+        )
+        document = {"hooks": {"PreToolUse": [base, second_group]}}
+    else:
+        document = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "shell",
+                        "hooks": [{"type": "command", "command": "changed"}],
+                    }
+                ]
+            }
+        }
+    context.destination.write_text(json.dumps(document), encoding="utf-8")
+    context.before_native = context.destination.read_bytes()
+
+
 @when("I install the hook for {agent} in {scope} scope")
 def install_native_hook(context, agent: str, scope: str) -> None:
     selected_scope = Scope(scope)
@@ -258,7 +451,7 @@ def install_hook_destination(context) -> None:
 def uninstall_hook(context) -> None:
     _capture(
         context,
-        lambda: _router(context).uninstall_hook(
+        lambda: _router(context, getattr(context, "agent", Agent.CODEX)).uninstall_hook(
             "reviewer", destination=context.destination
         ),
     )
@@ -281,6 +474,40 @@ def multi_agent_hook(context) -> None:
         ],
     )
     context.error = ValueError(result.output) if result.exit_code != 0 else None
+
+
+@when("I install the current hook with that predecessor declared")
+def install_with_predecessor(context) -> None:
+    _capture(
+        context,
+        lambda: _router(context, context.agent).install_hook(
+            context.current,
+            predecessors=context.predecessors,
+            destination=context.destination,
+        ),
+    )
+
+
+@when("I explicitly install the current hook")
+def install_owned_missing_hook(context) -> None:
+    _capture(
+        context,
+        lambda: _router(context, context.agent).install_hook(
+            context.current, destination=context.destination
+        ),
+    )
+
+
+@when("I inspect or install the current hook")
+def inspect_ambiguous_predecessor(context) -> None:
+    _capture(
+        context,
+        lambda: _router(context, context.agent).inspect_hook(
+            context.current,
+            predecessors=context.predecessors,
+            destination=context.destination,
+        ),
+    )
 
 
 @then("the integration is installed through that native surface")
@@ -397,3 +624,85 @@ def reports_conflict(context) -> None:
 def rejected_before_mutation(context) -> None:
     assert context.error is not None
     assert not context.destination.exists()
+
+
+@then("only the exact predecessor is removed")
+def exact_predecessor_removed(context) -> None:
+    if context.agent is Agent.PI:
+        assert not context.predecessor_target.exists()
+    else:
+        assert "legacy-check" not in context.destination.read_text(encoding="utf-8")
+
+
+@then("the current hook and its ownership evidence are installed atomically")
+@then("the current hook and its ownership evidence are retained")
+def current_hook_is_owned(context) -> None:
+    inspection = _router(context, context.agent).inspect_hook(
+        context.current, destination=context.destination
+    )
+    assert inspection.status == "current"
+    if context.agent is Agent.PI:
+        assert context.current_target.is_file()
+    else:
+        assert "current-check" in context.destination.read_text(encoding="utf-8")
+
+
+@then("the result reports a legacy-replaced transition without source conversion")
+def reports_legacy_replaced(context) -> None:
+    assert context.error is None
+    assert context.result.hook_transition is HookTransition.LEGACY_REPLACED
+    assert context.result.converted is False
+
+
+@then("the result reports a legacy-pruned transition")
+def reports_legacy_pruned(context) -> None:
+    assert context.error is None
+    assert context.result.hook_transition is HookTransition.LEGACY_PRUNED
+
+
+@then("the current hook is restored without changing unrelated configuration")
+def restored_hook_preserves_unrelated(context) -> None:
+    assert context.error is None
+    document = json.loads(context.destination.read_text(encoding="utf-8"))
+    assert document["theme"] == "dark"
+    assert "current-check" in context.destination.read_text(encoding="utf-8")
+
+
+@then("the result reports an owned-restored transition")
+def reports_owned_restored(context) -> None:
+    assert context.result.hook_transition is HookTransition.OWNED_RESTORED
+
+
+@then("only the stale ownership evidence is removed")
+def stale_ownership_removed(context) -> None:
+    assert context.error is None
+    assert _router(context, context.agent).inspect_hook(
+        context.current, destination=context.destination
+    ).status == "absent"
+
+
+@then("the absent hook is not recreated")
+def absent_hook_not_recreated(context) -> None:
+    document = json.loads(context.destination.read_text(encoding="utf-8"))
+    assert document["hooks"] == {}
+    assert document["theme"] == "dark"
+
+
+@then("the result reports an owned-removed transition")
+def reports_owned_removed(context) -> None:
+    assert context.result.hook_transition is HookTransition.OWNED_REMOVED
+
+
+@then("the operation reports a conflict before mutation")
+def predecessor_conflict(context) -> None:
+    assert context.error is None
+    assert context.result.status == "conflict"
+    assert context.destination.read_bytes() == context.before_native
+
+
+@then(
+    "no native content is claimed from a command prefix, filename, event alone, or destination"
+)
+def ambiguous_native_content_unclaimed(context) -> None:
+    assert context.destination.read_bytes() == context.before_native
+    assert context.result.status == "conflict"

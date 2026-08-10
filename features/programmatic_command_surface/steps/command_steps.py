@@ -20,6 +20,8 @@ from agent_router import (
     ArtifactEffectiveState,
     ArtifactManifest,
     ArtifactPolicy,
+    Hook,
+    HookTransition,
     PluginRef,
     Scope,
     Skill,
@@ -130,6 +132,95 @@ def given_explicit_destination(context) -> None:
     context.destination = context.root / "custom-destination"
 
 
+@given("a current hook and zero or more exact native predecessor hooks")
+def given_hook_predecessor_command(context) -> None:
+    current_root = context.root / "current"
+    legacy_root = context.root / "legacy"
+    older_root = context.root / "older"
+    current_root.mkdir()
+    legacy_root.mkdir()
+    older_root.mkdir()
+    current_path = _write_json_hook(current_root)
+    predecessor_path = _write_json_hook(legacy_root)
+    other_path = _write_json_hook(older_root)
+    current_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "shell",
+                            "hooks": [
+                                {"type": "command", "command": "current-check"}
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    predecessor_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "shell",
+                            "hooks": [
+                                {"type": "command", "command": "legacy-check"}
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    other_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "write",
+                            "hooks": [
+                                {"type": "command", "command": "older-check"}
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    context.current_hook = Hook.from_path(current_path, source_agent=Agent.CLAUDE)
+    context.predecessor_hooks = (
+        Hook.from_path(predecessor_path, source_agent=Agent.CLAUDE),
+        Hook.from_path(other_path, source_agent=Agent.CLAUDE),
+    )
+    context.predecessor_paths = (predecessor_path, other_path)
+    context.destination = context.root / "settings.json"
+    context.destination.write_text(
+        json.dumps(
+            {
+                "hooks": json.loads(
+                    predecessor_path.read_text(encoding="utf-8")
+                )["hooks"]
+            }
+        ),
+        encoding="utf-8",
+    )
+    context.runner = CliRunner()
+
+
+@given(
+    "a hook operation reconciles an exact predecessor or wholly missing owned projection"
+)
+def given_hook_transition_operation(context) -> None:
+    given_hook_predecessor_command(context)
+
+
 @given("project scope and an explicit destination")
 def given_project_destination(context) -> None:
     given_portable_skill(context)
@@ -171,6 +262,43 @@ def import_base(context) -> None:
         text=True,
         check=False,
     )
+
+
+@when(
+    "I inspect or install through the agent-bound library or repeatable hook predecessor command options"
+)
+def use_hook_predecessor_surfaces(context) -> None:
+    router = _router(context, Agent.CLAUDE)
+    context.library_inspection = router.inspect_hook(
+        context.current_hook,
+        predecessors=context.predecessor_hooks,
+        destination=context.destination,
+    )
+    args = [
+        "hook",
+        "install",
+        str(context.current_hook.path),
+        "--agent",
+        "claude",
+        "--destination",
+        str(context.destination),
+        "--json",
+    ]
+    for predecessor in context.predecessor_paths:
+        args.extend(("--predecessor", str(predecessor)))
+    context.cli_result = context.runner.invoke(app, args)
+    if context.cli_result.exit_code == 0:
+        context.cli_payload = json.loads(context.cli_result.stdout)["result"]
+
+
+@when("its structured lifecycle result is returned or serialized")
+def serialize_hook_transition(context) -> None:
+    context.lifecycle_result = _router(context, Agent.CLAUDE).install_hook(
+        context.current_hook,
+        predecessors=context.predecessor_hooks,
+        destination=context.destination,
+    )
+    context.serialized_result = context.lifecycle_result.to_dict()
 
 
 @when("I invoke the optional command surface")
@@ -449,6 +577,64 @@ def json_envelope(context) -> None:
 @then("diagnostics are written only to standard error")
 def diagnostics_stream(context) -> None:
     assert context.cli_result.stderr == ""
+
+
+@then("every predecessor is validated for the selected agent and semantic scope")
+def predecessors_validated(context) -> None:
+    assert context.library_inspection.status == "outdated"
+    assert context.library_inspection.hook_transition is HookTransition.LEGACY_REPLACED
+    assert context.cli_result.exit_code == 0, context.cli_result.output
+
+
+@then("hook inspect and install receive the same immutable predecessor sequence")
+def predecessor_sequence_retained(context) -> None:
+    assert context.cli_payload["hook_transition"] == "legacy-replaced"
+    assert _router(context, Agent.CLAUDE).inspect_hook(
+        context.current_hook, destination=context.destination
+    ).status == "current"
+
+
+@then("skill lifecycle and hook uninstall expose no predecessor input")
+def predecessor_option_is_narrow(context) -> None:
+    skill = _write_skill(context.root, "narrow-skill")
+    skill_result = context.runner.invoke(
+        app,
+        [
+            "skill",
+            "inspect",
+            str(skill),
+            "--agent",
+            "claude",
+            "--predecessor",
+            str(context.predecessor_paths[0]),
+        ],
+    )
+    uninstall_result = context.runner.invoke(
+        app,
+        [
+            "hook",
+            "uninstall",
+            context.current_hook.name,
+            "--agent",
+            "claude",
+            "--predecessor",
+            str(context.predecessor_paths[0]),
+        ],
+    )
+    assert skill_result.exit_code == 2
+    assert uninstall_result.exit_code == 2
+
+
+@then("the result contains the applicable hook transition")
+def structured_hook_transition(context) -> None:
+    assert context.lifecycle_result.hook_transition is HookTransition.LEGACY_REPLACED
+    assert context.serialized_result["hook_transition"] == "legacy-replaced"
+
+
+@then("converted continues to describe only authorized cross-agent source conversion")
+def transition_is_not_conversion(context) -> None:
+    assert context.lifecycle_result.converted is False
+    assert context.serialized_result["converted"] is False
 
 
 @then("its process status is {status:d}")

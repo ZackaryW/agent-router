@@ -31,6 +31,7 @@ ProjectOption = Annotated[Path | None, typer.Option("--project-root")]
 DestinationOption = Annotated[Path | None, typer.Option("--destination")]
 JsonOption = Annotated[bool, typer.Option("--json")]
 ConversionOption = Annotated[bool, typer.Option("--allow-conversion")]
+PredecessorOption = Annotated[list[Path] | None, typer.Option("--predecessor")]
 
 
 def _run(action: Callable[[], LifecycleResult], json_output: bool) -> None:
@@ -59,6 +60,10 @@ def _one_agent(agents: list[Agent]) -> Agent:
             "exactly one --agent is required", param_hint="--agent"
         )
     return agents[0]
+
+
+def _hook_predecessors(paths: list[Path] | None) -> tuple[Hook, ...]:
+    return tuple(Hook.from_path(path) for path in paths or ())
 
 
 @skill_app.command("inspect")
@@ -131,6 +136,7 @@ def inspect_hook(
     project_root: ProjectOption = None,
     destination: DestinationOption = None,
     allow_conversion: ConversionOption = False,
+    predecessor: PredecessorOption = None,
     json_output: JsonOption = False,
 ) -> None:
     _run(
@@ -140,6 +146,7 @@ def inspect_hook(
             project_root=project_root,
             destination=destination,
             allow_conversion=allow_conversion,
+            predecessors=_hook_predecessors(predecessor),
         ),
         json_output,
     )
@@ -153,6 +160,7 @@ def install_hook(
     project_root: ProjectOption = None,
     destination: DestinationOption = None,
     allow_conversion: ConversionOption = False,
+    predecessor: PredecessorOption = None,
     json_output: JsonOption = False,
 ) -> None:
     _run(
@@ -162,6 +170,7 @@ def install_hook(
             project_root=project_root,
             destination=destination,
             allow_conversion=allow_conversion,
+            predecessors=_hook_predecessors(predecessor),
         ),
         json_output,
     )
