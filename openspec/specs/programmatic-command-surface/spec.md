@@ -3,9 +3,7 @@
 ## Purpose
 
 Exposes the agent asset lifecycle through an importable base library and an optional deterministic command suitable for direct human use and unattended automation through `uvx`.
-
 ## Requirements
-
 ### Requirement: Importable base library
 The base `agent_router` installation SHALL expose the supported agent asset lifecycle as an importable Python library without requiring Typer or another CLI-only dependency. Importing the library SHALL NOT import the CLI package transitively. Attempting to invoke or import the optional command surface without the `cli` extra SHALL report that `agent_router[cli]` is required rather than exposing a raw optional-dependency import failure.
 
@@ -50,7 +48,7 @@ The base `agent_router` library and optional `cli` extra SHALL support CPython 3
 ### Requirement: Agent-bound Python lifecycle
 The supported Python API SHALL expose `Agent`, `AgentRouter`, `Skill`, `Hook`, `HookTransition`, `Scope`, structured compatibility and lifecycle results, and typed domain errors. Constructing `AgentRouter` with one `Agent` SHALL bind subsequent lifecycle operations to that agent without performing filesystem mutation during construction.
 
-`Skill.from_path` and `Hook.from_path` SHALL load and validate one existing local source asset without mutating an agent destination and SHALL make detected native-agent compatibility available to library callers. Agent-bound skill and hook inspection, installation, and uninstallation SHALL be available through Pythonic methods. Each lifecycle method SHALL use user scope by default, require an explicit `project_root` for project scope, and accept an optional `destination` override with the same behavior and safety contract as the CLI `--destination` option. Installation SHALL accept `allow_conversion`, which SHALL default to false. Hook inspection and installation SHALL accept an immutable sequence of exact predecessor `Hook` assets, defaulting to empty. Uninstallation SHALL accept a stable asset name and SHALL NOT require the original source. Methods SHALL return structured results or raise typed domain errors rather than terminating the process.
+`Skill.from_path` and `Hook.from_path` SHALL load and validate one existing local source asset without mutating an agent destination and SHALL make detected native-agent compatibility available to library callers. Agent-bound skill and hook inspection, installation, and uninstallation SHALL be available through Pythonic methods. Each lifecycle method SHALL use user scope by default, require an explicit `project_root` for project scope, and accept an optional `destination` override with the same behavior and safety contract as the CLI `--destination` option. Installation SHALL accept `allow_conversion`, which SHALL default to false. Hook inspection and installation SHALL accept an immutable sequence of exact predecessor `Hook` assets, defaulting to empty. Skill uninstallation SHALL accept a stable asset name, SHALL NOT require the original source, and SHALL accept explicit `force`, defaulting to false, according to the ownership-safe skill uninstallation contract. Hook uninstallation SHALL retain its existing signature and behavior. Methods SHALL return structured results or raise typed domain errors rather than terminating the process.
 
 Lifecycle results SHALL expose a nullable hook transition independently of the existing `converted` flag. The transition SHALL distinguish exact predecessor replacement, predecessor pruning beside a current hook, restoration of a wholly missing owned hook, and removal of stale ownership for a wholly absent hook. The `converted` flag SHALL retain only its existing cross-agent source-conversion meaning.
 
@@ -81,6 +79,14 @@ Lifecycle results SHALL expose a nullable hook transition independently of the e
 #### Scenario: Uninstall from a library destination
 - **WHEN** a caller passes an asset name and `destination` to an agent-bound uninstallation method
 - **THEN** the library removes only an intact projection installed and owned by `agent-router` at that destination or its stale ownership evidence when the owned projection is proven wholly absent
+
+#### Scenario: Force-delete through the library
+- **WHEN** a caller passes `force=True` to `AgentRouter.uninstall_skill` for a modified but validly owned projection
+- **THEN** the library applies the explicit no-history forced deletion contract and returns a structured lifecycle result
+
+#### Scenario: Keep forced deletion out of the command
+- **WHEN** a caller inspects or invokes the optional skill uninstall command
+- **THEN** the command exposes no force option and retains default ownership-safe uninstallation
 
 #### Scenario: Select a library project scope
 - **WHEN** a caller passes `Scope.PROJECT` and an explicit `project_root` to an agent-bound lifecycle operation
@@ -251,3 +257,10 @@ Both surfaces SHALL accept `exact`, `pattern`, or `none` Git-ignore policy. Exac
 #### Scenario: Update an explicit project destination
 - **WHEN** project skill update supplies both its required project root and a destination override
 - **THEN** the operation replaces that exact target while retaining project-scoped router state and Git-ignore semantics
+
+### Requirement: Command force-deletion exclusion
+The optional command surface SHALL NOT expose a force-deletion option for skill uninstallation. Its uninstall command SHALL continue to invoke the default ownership-safe library behavior.
+
+#### Scenario: Inspect skill uninstall help
+- **WHEN** a user inspects `agent-router skill uninstall --help`
+- **THEN** no force option is present

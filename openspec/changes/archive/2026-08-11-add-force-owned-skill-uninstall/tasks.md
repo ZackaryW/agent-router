@@ -19,5 +19,5 @@
 - [x] 4.1 Run targeted skill BDD and ownership/mutation unit tests
 - [x] 4.2 Document forced library deletion and unchanged CLI behavior
 - [x] 4.3 Bump and publish Agent Router 0.1.3
-- [ ] 4.4 Run complete tests, BDD audit, build, and strict validation
-- [ ] 4.5 Archive the completed change
+- [x] 4.4 Run complete tests, BDD audit, build, and strict validation
+- [x] 4.5 Archive the completed change

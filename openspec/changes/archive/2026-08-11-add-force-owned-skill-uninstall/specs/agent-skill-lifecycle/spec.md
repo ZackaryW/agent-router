@@ -9,7 +9,7 @@ The Python library MAY receive explicit `force=True` deletion authority. Forced 
 - **WHEN** a caller uninstalls an intact projection previously owned by the system
 - **THEN** the system removes only the proven owned skill paths and retains neighboring content
 
-#### Scenario: Preserve modified managed content by default
+#### Scenario: Preserve modified managed content
 - **WHEN** a managed skill path no longer matches its recorded installed identity and force is not authorized
 - **THEN** uninstallation fails without deleting that path or unrelated content
 
@@ -32,4 +32,3 @@ The Python library MAY receive explicit `force=True` deletion authority. Forced 
 #### Scenario: Reject invalid forced ownership
 - **WHEN** forced uninstallation encounters malformed, ambiguous, or mismatched ownership state
 - **THEN** it fails without deleting the target or ownership evidence
-
