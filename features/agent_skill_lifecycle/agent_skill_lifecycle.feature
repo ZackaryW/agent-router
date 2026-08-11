@@ -80,6 +80,37 @@ Feature: Manage Agent Skills
       | not installed by agent-router      |
       | modified after managed installation |
 
+  Scenario: Force-delete a modified owned skill without history
+    Given a managed skill modified after installation
+    And a neighboring skill outside the owned target
+    When I force-uninstall the skill through the Python library
+    Then the exact owned skill and ownership records are removed
+    And no backup or history of the removed skill is retained
+    And the neighboring skill is retained
+
+  Scenario: Force-clean stale ownership for missing content
+    Given a managed skill target removed outside agent-router
+    When I force-uninstall the skill through the Python library
+    Then its stale ownership records are removed
+    And the lifecycle result reports removal
+
+  Scenario: Treat wholly absent forced removal as converged
+    Given no skill target or ownership record exists
+    When I force-uninstall the skill through the Python library
+    Then the lifecycle result reports an absent no-op
+    And no destination or ownership state is created
+
+  Scenario: Refuse forced deletion of an unmanaged skill
+    Given a same-named skill not installed by agent-router
+    When I force-uninstall the skill through the Python library
+    Then the operation reports an ownership conflict
+    And the skill is not removed
+
+  Scenario: Keep force deletion out of the command surface
+    Given the optional agent-router command is available
+    When I inspect skill uninstall help
+    Then no force deletion option is exposed
+
   Scenario: Reject a multi-agent skill operation
     Given a valid portable Agent Skill
     When I request one skill operation for Codex and Claude

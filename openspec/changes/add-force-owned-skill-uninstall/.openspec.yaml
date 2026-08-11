@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-11
+goal: Allow recovery cleanup to remove modified but proven-owned skill
+  projections without weakening default uninstall safety.
