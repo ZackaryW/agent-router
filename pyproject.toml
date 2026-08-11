@@ -1,6 +1,6 @@
 [project]
 name = "agent-router"
-version = "0.1.2"
+version = "0.1.3"
 description = "Install and remove agent skills and hooks through native agent surfaces"
 readme = "README.md"
 authors = [
