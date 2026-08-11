@@ -7,6 +7,7 @@ from behave import given, then, when
 from agent_router import (
     Agent,
     ArtifactManifest,
+    ArtifactPolicy,
     PluginManagerUnavailableError,
     PluginRef,
     PluginTrustError,
@@ -14,7 +15,7 @@ from agent_router import (
     UnsupportedPluginLifecycleError,
     UnsupportedScopeError,
 )
-from agent_router.utils.plugin_state import load_plugin_state, plugin_state_path
+from agent_router.utils.plugin_state import load_plugin_state
 from features.support.lifecycle import capture
 from features.support.plugins import (
     FakeNativeManager,
@@ -27,6 +28,16 @@ from features.support.plugins import (
 def _selected_ref(agent: Agent, scope: str = "user") -> PluginRef:
     native_ref = "npm:review" if agent is Agent.PI else "review@configured"
     return ref(agent, native_ref, scope)
+
+
+def _state_path(context, selected_ref: PluginRef | None = None):
+    item = selected_ref or context.ref
+    base = (
+        context.project_root
+        if item.scope in {"project", "local"}
+        else context.destination
+    )
+    return base / ".z-agent-router" / "plugins.json"
 
 
 @given("a configured native catalog entry for {agent}")
@@ -61,7 +72,7 @@ def installed_verified(context) -> None:
 
 @then("a router ownership receipt is recorded for its scoped PluginRef")
 def receipt_recorded(context) -> None:
-    state = load_plugin_state(plugin_state_path(context.destination))
+    state = load_plugin_state(_state_path(context))
     assert len(state.receipts) == 1
     assert state.receipts[0].key.native_ref == context.ref.native_ref
     assert state.receipts[0].key.scope == context.ref.scope
@@ -223,7 +234,7 @@ def reports_unmanaged(context) -> None:
 def historical_receipt(context) -> None:
     configured_entry(context, "claude")
     context.router.install_plugin(context.ref)
-    context.receipt_before = load_plugin_state(plugin_state_path(context.destination)).receipts[0]
+    context.receipt_before = load_plugin_state(_state_path(context)).receipts[0]
     context.native.calls.clear()
 
 
@@ -240,7 +251,7 @@ def update_owned(context) -> None:
 @then("the historical receipt remains valid ownership evidence")
 def historical_valid(context) -> None:
     assert context.error is None
-    after = load_plugin_state(plugin_state_path(context.destination)).receipts[0]
+    after = load_plugin_state(_state_path(context)).receipts[0]
     assert after.key == context.receipt_before.key
 
 
@@ -305,7 +316,7 @@ def exact_absent(context) -> None:
 
 @then("only then is its ownership receipt cleared")
 def receipt_cleared(context) -> None:
-    assert not load_plugin_state(plugin_state_path(context.destination)).receipts
+    assert not load_plugin_state(_state_path(context)).receipts
 
 
 @then("unrelated plugins remain unchanged")
@@ -425,4 +436,40 @@ def unavailable_outcome(context) -> None:
 @then("no undocumented fallback mutates state")
 def no_fallback(context) -> None:
     assert not context.native.installed
-    assert not plugin_state_path(context.destination).exists()
+    assert not _state_path(context).exists()
+
+
+@given("a plugin installation is authoritatively verified")
+def verified_plugin_for_scoped_state(context) -> None:
+    context.agent = Agent.CODEX
+    context.native = FakeNativeManager(context.destination)
+    context.ref = _selected_ref(context.agent)
+    context.extension = PathArtifactExtension(
+        ArtifactManifest("zpp.traits", "1"), PurePath("traits.yaml")
+    )
+    context.router = plugin_router(
+        context, context.agent, extensions=(context.extension,)
+    )
+    context.router.install_plugin(context.ref)
+
+
+@when("agent-router records its scoped ownership and artifact policy")
+def record_plugin_policy_outside_native(context) -> None:
+    context.router.set_artifact_policy(
+        context.ref, "zpp.traits", ArtifactPolicy.DISABLED
+    )
+
+
+@then("the receipt and policy use the selected router application-data root")
+def plugin_state_uses_appdata(context) -> None:
+    state = load_plugin_state(_state_path(context))
+    assert len(state.receipts) == 1
+    assert len(state.overrides) == 1
+
+
+@then("no router metadata is added to native plugin discovery or runtime content")
+def plugin_runtime_has_no_router_metadata(context) -> None:
+    assert not (context.destination / ".agent-router").exists()
+    for plugin in context.native.installed:
+        assert plugin.root is not None
+        assert not tuple(plugin.root.rglob(".z-agent-router"))

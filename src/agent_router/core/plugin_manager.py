@@ -33,15 +33,18 @@ from agent_router.utils.plugin_evidence import (
 from agent_router.utils.plugin_state import (
     ArtifactPolicyOverride,
     PluginOwnershipReceipt,
+    PluginState,
+    PluginStateEvidence,
     PluginStateKey,
     clear_artifact_policy,
-    load_plugin_state,
-    plugin_state_path,
+    load_plugin_state_evidence,
+    plugin_state_locations,
     put_receipt,
     remove_receipt,
-    save_plugin_state,
+    serialize_plugin_state,
     set_artifact_policy,
 )
+from agent_router.utils.mutation import MutationPlan, Write, apply_mutation
 from agent_router.utils.process import (
     ProcessExecutionError,
     ProcessRequest,
@@ -101,6 +104,11 @@ class PluginManager:
             raise PluginTrustError("direct URL, Git, and local plugin sources require trust")
         before = self._find(self.discover(), ref)
         if before is not None:
+            evidence = self._state_evidence(ref)
+            if evidence.source in {"legacy", "duplicate"} and any(
+                receipt.key == self._key(ref) for receipt in evidence.state.receipts
+            ):
+                self._save_state(evidence.state, evidence, ref)
             return PluginLifecycleResult("install", ref, "no-op", before, before)
         result = self._run(self._mutation_argv("install", ref))
         if result.returncode != 0:
@@ -113,17 +121,17 @@ class PluginManager:
             return PluginLifecycleResult("install", ref, "indeterminate", before, None)
         if after is None:
             return PluginLifecycleResult("install", ref, "indeterminate", before, None)
-        state_path = plugin_state_path(self.environment.root)
+        evidence = self._state_evidence(ref)
         state = put_receipt(
-            load_plugin_state(state_path),
+            evidence.state,
             PluginOwnershipReceipt(self._key(ref), ref.source),
         )
-        save_plugin_state(state_path, state)
+        self._save_state(state, evidence, ref)
         return PluginLifecycleResult("install", after.ref, "installed", before, after)
 
     def update(self, ref: PluginRef) -> PluginLifecycleResult:
         self._preflight(ref, "update")
-        self._require_owned(ref)
+        evidence = self._require_owned(ref)
         before = self._find(self.discover(), ref)
         if before is None:
             raise PluginOperationError("owned plugin is absent from authoritative state")
@@ -140,6 +148,8 @@ class PluginManager:
             return PluginLifecycleResult("update", ref, "partially-changed", before, None)
         if after is None:
             return PluginLifecycleResult("update", ref, "partially-changed", before, None)
+        if evidence.source in {"legacy", "duplicate"}:
+            self._save_state(evidence.state, evidence, ref)
         status = (
             "no-op"
             if (before.installed_version, before.runtime_root)
@@ -150,7 +160,7 @@ class PluginManager:
 
     def remove(self, ref: PluginRef) -> PluginLifecycleResult:
         self._preflight(ref, "remove")
-        self._require_owned(ref)
+        evidence = self._require_owned(ref)
         before = self._find(self.discover(), ref)
         if before is None:
             raise PluginOperationError("owned plugin is absent from authoritative state")
@@ -165,9 +175,8 @@ class PluginManager:
             return PluginLifecycleResult("remove", ref, "partially-changed", before, None)
         if after is not None:
             return PluginLifecycleResult("remove", ref, "indeterminate", before, after)
-        state_path = plugin_state_path(self.environment.root)
-        save_plugin_state(
-            state_path, remove_receipt(load_plugin_state(state_path), self._key(ref))
+        self._save_state(
+            remove_receipt(evidence.state, self._key(ref)), evidence, ref
         )
         return PluginLifecycleResult("remove", ref, "removed", before, None)
 
@@ -187,8 +196,8 @@ class PluginManager:
         self, ref: PluginRef, identifier: str, policy: ArtifactPolicy
     ) -> ArtifactStatus:
         selected = ArtifactPolicy(policy)
-        state_path = plugin_state_path(self.environment.root)
-        state = load_plugin_state(state_path)
+        evidence = self._state_evidence(ref)
+        state = evidence.state
         if selected is ArtifactPolicy.INHERIT:
             state = clear_artifact_policy(state, self._key(ref), identifier)
         else:
@@ -196,7 +205,7 @@ class PluginManager:
                 state,
                 ArtifactPolicyOverride(self._key(ref), identifier, selected.value),
             )
-        save_plugin_state(state_path, state)
+        self._save_state(state, evidence, ref)
         return self.artifact_status(ref, identifier)
 
     def clear_artifact_policy(self, ref: PluginRef, identifier: str) -> ArtifactStatus:
@@ -258,7 +267,7 @@ class PluginManager:
         )
 
     def _policy(self, ref: PluginRef, identifier: str) -> ArtifactPolicy:
-        state = load_plugin_state(plugin_state_path(self.environment.root))
+        state = self._state_evidence(ref).state
         for override in state.overrides:
             if override.key == self._key(ref) and override.artifact_id == identifier:
                 return ArtifactPolicy(override.policy)
@@ -321,12 +330,82 @@ class PluginManager:
         if self.agent is Agent.CLAUDE and ref.scope == "managed" and operation != "update":
             raise UnsupportedScopeError("Claude managed plugins support update only")
 
-    def _require_owned(self, ref: PluginRef) -> None:
-        state = load_plugin_state(plugin_state_path(self.environment.root))
-        if not any(receipt.key == self._key(ref) for receipt in state.receipts):
+    def _require_owned(self, ref: PluginRef) -> PluginStateEvidence:
+        evidence = self._state_evidence(ref)
+        if not any(receipt.key == self._key(ref) for receipt in evidence.state.receipts):
             raise UnmanagedPluginError(
                 f"plugin was not installed by agent-router: {ref.native_ref} ({ref.scope})"
             )
+        return evidence
+
+    def _state_evidence(self, ref: PluginRef) -> PluginStateEvidence:
+        base = (
+            self.environment.project_root
+            if ref.scope in {"project", "local"}
+            else self.environment.root
+        )
+        assert base is not None
+        return load_plugin_state_evidence(
+            plugin_state_locations(
+                state_root=base / ".z-agent-router",
+                legacy_root=self.environment.root,
+            )
+        )
+
+    def _save_state(
+        self, state: PluginState, evidence: PluginStateEvidence, ref: PluginRef
+    ) -> None:
+        legacy = evidence.source in {"legacy", "duplicate"}
+        writes = (
+            Write(
+                evidence.locations.current,
+                serialize_plugin_state(state),
+            ),
+        )
+        if legacy:
+            user_path = plugin_state_locations(
+                state_root=self.environment.root / ".z-agent-router",
+                legacy_root=self.environment.root,
+            ).current
+            project_root = self.environment.project_root
+            assert project_root is not None
+            project_path = plugin_state_locations(
+                state_root=project_root / ".z-agent-router",
+                legacy_root=self.environment.root,
+            ).current
+            if user_path != project_path:
+                user_state = self._partition_state(state, project=False)
+                project_state = self._partition_state(state, project=True)
+                selected_project = ref.scope in {"project", "local"}
+                writes = tuple(
+                    Write(path, serialize_plugin_state(partition))
+                    for path, partition, selected in (
+                        (user_path, user_state, not selected_project),
+                        (project_path, project_state, selected_project),
+                    )
+                    if selected or partition.receipts or partition.overrides
+                )
+        apply_mutation(
+            MutationPlan(
+                writes,
+                (evidence.locations.legacy,) if legacy else (),
+                prune_empty=(evidence.locations.legacy.parent,) if legacy else (),
+            )
+        )
+
+    def _partition_state(self, state: PluginState, *, project: bool) -> PluginState:
+        def selected(scope: str) -> bool:
+            return (scope in {"project", "local"}) is project
+
+        return PluginState(
+            receipts=tuple(
+                receipt for receipt in state.receipts if selected(receipt.key.scope)
+            ),
+            overrides=tuple(
+                override for override in state.overrides if selected(override.key.scope)
+            ),
+            schema_version=state.schema_version,
+        )
 
     def _key(self, ref: PluginRef) -> PluginStateKey:
         return PluginStateKey(ref.agent.value, ref.scope, ref.native_ref)

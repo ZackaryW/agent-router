@@ -20,6 +20,8 @@ from agent_router import (
     ArtifactEffectiveState,
     ArtifactManifest,
     ArtifactPolicy,
+    GitIgnorePolicy,
+    IgnoreMode,
     Hook,
     HookTransition,
     PluginRef,
@@ -346,7 +348,25 @@ def _invoke_lifecycle_command(context, kind: str, operation: str) -> None:
         name = f"{operation}-hook"
         destination = destination.with_suffix(".json")
     base = [kind, operation]
-    if operation == "uninstall":
+    if operation == "update":
+        project_root = context.root / "cli-update-project"
+        project_root.mkdir()
+        destination = project_root / ".agents" / "skills"
+        target = destination / name
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text("old", encoding="utf-8")
+        base.append(str(source))
+        base.extend(
+            [
+                "--scope",
+                "project",
+                "--project-root",
+                str(project_root),
+                "--ignore-policy",
+                "none",
+            ]
+        )
+    elif operation == "uninstall":
         install = runner.invoke(
             app,
             [
@@ -406,6 +426,18 @@ def operate_with_override(context, operation: str) -> None:
         _capture(context, lambda: router.inspect_skill(context.skill, **kwargs))
     elif operation == "install":
         _capture(context, lambda: router.install_skill(context.skill, **kwargs))
+    elif operation == "update":
+        target = context.destination / context.skill.name
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text("old", encoding="utf-8")
+        _capture(
+            context,
+            lambda: router.update_skill(
+                context.skill,
+                **kwargs,
+                ignore_policy=GitIgnorePolicy("none"),
+            ),
+        )
     else:
         router.install_skill(context.skill, **kwargs)
         _capture(context, lambda: router.uninstall_skill(context.skill.name, **kwargs))
@@ -422,6 +454,123 @@ def request_invalid_project_operation(context) -> None:
             destination=context.destination,
         ),
     )
+
+
+@given("a valid authoritative skill update and existing project target")
+def given_public_skill_update(context) -> None:
+    given_portable_skill(context)
+    given_project_root(context)
+    context.destination = context.project_root / ".agents" / "skills"
+    context.target = context.destination / context.skill.name
+    context.target.mkdir(parents=True)
+    (context.target / "SKILL.md").write_text("old", encoding="utf-8")
+    context.runner = CliRunner()
+
+
+@when('I invoke update_skill or "agent-router skill update" with explicit project scope')
+def invoke_public_skill_update(context) -> None:
+    context.library_result = _router(context).update_skill(
+        context.skill,
+        scope=Scope.PROJECT,
+        project_root=context.project_root,
+        ignore_policy=GitIgnorePolicy("none"),
+    )
+    context.cli_result = context.runner.invoke(
+        app,
+        [
+            "skill",
+            "update",
+            str(context.source),
+            "--agent",
+            "codex",
+            "--scope",
+            "project",
+            "--project-root",
+            str(context.project_root),
+            "--ignore-policy",
+            "none",
+            "--json",
+        ],
+    )
+
+
+@then("the request uses the complete-target project update lifecycle")
+def public_update_uses_complete_target(context) -> None:
+    assert context.library_result.operation == "update"
+    assert context.library_result.scope is Scope.PROJECT
+    assert context.cli_result.exit_code == 0, context.cli_result.output
+
+
+@then("the result is structured for the library or deterministic for the command")
+def public_update_results(context) -> None:
+    assert context.library_result.to_dict()["operation"] == "update"
+    payload = json.loads(context.cli_result.stdout)
+    assert payload["result"]["operation"] == "update"
+
+
+@given("a project skill update selects {policy}")
+def given_ignore_policy_case(context, policy: str) -> None:
+    context.policy_case = policy.strip()
+
+
+@when("the library or command validates its ignore options")
+def validate_ignore_options(context) -> None:
+    mode_name, _, pattern_case = context.policy_case.partition(" ")
+    pattern = (
+        "/.agents/skills/*/"
+        if pattern_case.startswith("with ")
+        else None
+    )
+    try:
+        context.policy = GitIgnorePolicy(IgnoreMode(mode_name), pattern)
+        context.policy_error = None
+    except ValueError as error:
+        context.policy = None
+        context.policy_error = error
+
+
+@then("the request is {outcome} before project mutation")
+def policy_validation_outcome(context, outcome: str) -> None:
+    if outcome.strip() == "accepted":
+        assert context.policy is not None
+        assert context.policy_error is None
+    else:
+        assert context.policy is None
+        assert isinstance(context.policy_error, ValueError)
+    assert not (context.root / "project").exists()
+
+
+@given("a valid authoritative skill update source")
+def given_public_authoritative_source(context) -> None:
+    given_portable_skill(context)
+    context.runner = CliRunner()
+
+
+@when('update_skill or "agent-router skill update" selects user scope')
+def invoke_user_scope_update(context) -> None:
+    _capture(
+        context,
+        lambda: _router(context).update_skill(context.skill, scope=Scope.USER),
+    )
+    context.cli_result = context.runner.invoke(
+        app,
+        [
+            "skill",
+            "update",
+            str(context.source),
+            "--agent",
+            "codex",
+            "--scope",
+            "user",
+        ],
+    )
+
+
+@then("the request is rejected before target inspection or mutation")
+def public_user_update_rejected(context) -> None:
+    assert isinstance(context.error, AgentRouterError)
+    assert context.cli_result.exit_code == 2
+    assert not (context.home / ".codex" / "skills").exists()
 
 
 @when("the command completes")

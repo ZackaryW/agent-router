@@ -4,6 +4,8 @@ commands:
     provider:
       kind: argv
       argv: [uv, run, --python, "3.11", --extra, cli, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
+    gates:
+      zpp-flow-wire-feature: [skills, hooks, plugin-discovery, plugin-lifecycle, router-state, command]
     targets:
       skills:
         value: features/agent_skill_lifecycle
@@ -21,6 +23,9 @@ commands:
           - src/agent_router/utils/destinations.py
           - src/agent_router/utils/mutation.py
           - src/agent_router/utils/ownership.py
+          - src/agent_router/utils/gitignore.py
+          - src/agent_router/utils/process.py
+          - src/agent_router/utils/router_state.py
       hooks:
         value: features/agent_hook_lifecycle
         paths:
@@ -38,6 +43,7 @@ commands:
           - src/agent_router/utils/mutation.py
           - src/agent_router/utils/native_hooks.py
           - src/agent_router/utils/ownership.py
+          - src/agent_router/utils/router_state.py
       plugin-discovery:
         value: features/agent_plugin_discovery
         paths:
@@ -56,6 +62,8 @@ commands:
           - src/agent_router/utils/plugin_evidence.py
           - src/agent_router/utils/plugin_state.py
           - src/agent_router/utils/process.py
+          - src/agent_router/utils/mutation.py
+          - src/agent_router/utils/router_state.py
       plugin-lifecycle:
         value: features/agent_plugin_lifecycle
         paths:
@@ -73,6 +81,26 @@ commands:
           - src/agent_router/utils/plugin_evidence.py
           - src/agent_router/utils/plugin_state.py
           - src/agent_router/utils/process.py
+          - src/agent_router/utils/mutation.py
+          - src/agent_router/utils/router_state.py
+      router-state:
+        value: features/router_state_storage
+        paths:
+          - features/router_state_storage/**
+          - features/support/**
+          - scripts/run_behave_roots.py
+          - pyproject.toml
+          - uv.lock
+          - zpp.behave.yaml
+          - src/agent_router/__init__.py
+          - src/agent_router/core/**
+          - src/agent_router/utils/destinations.py
+          - src/agent_router/utils/gitignore.py
+          - src/agent_router/utils/mutation.py
+          - src/agent_router/utils/ownership.py
+          - src/agent_router/utils/plugin_state.py
+          - src/agent_router/utils/process.py
+          - src/agent_router/utils/router_state.py
       command:
         value: features/programmatic_command_surface
         paths:
@@ -87,6 +115,8 @@ commands:
     provider:
       kind: argv
       argv: [uv, run, --python, "3.11", --extra, cli, python, scripts/run_behave_roots.py, "{targets}", --format, progress]
+    gates:
+      zpp-flow-wire-feature: [skills, hooks, plugin-discovery, plugin-lifecycle, router-state, command]
     targets:
       skills:
         value: features/agent_skill_lifecycle
@@ -99,6 +129,9 @@ commands:
         paths: ["**"]
       plugin-lifecycle:
         value: features/agent_plugin_lifecycle
+        paths: ["**"]
+      router-state:
+        value: features/router_state_storage
         paths: ["**"]
       command:
         value: features/programmatic_command_surface

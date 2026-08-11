@@ -425,7 +425,7 @@ def _fail_ownership_write(
     real_atomic_write = mutation.atomic_write
 
     def injected(path: Path, content: bytes) -> None:
-        if ".agent-router" in path.parts:
+        if ".z-agent-router" in path.parts:
             raise OSError("injected ownership failure")
         real_atomic_write(path, content)
 
@@ -448,7 +448,7 @@ def test_shared_predecessor_transition_is_atomic_on_ownership_failure(
         )
 
     assert destination.read_bytes() == before
-    assert not (tmp_path / ".agent-router/hook/zpp-session.json").exists()
+    assert not (tmp_path / ".z-agent-router").exists()
 
 
 def test_dedicated_predecessor_transition_is_atomic_on_ownership_failure(
@@ -473,4 +473,4 @@ def test_dedicated_predecessor_transition_is_atomic_on_ownership_failure(
 
     assert legacy_target.read_text(encoding="utf-8") == "export default 'legacy'"
     assert not (destination / "zpp-session.ts").exists()
-    assert not (destination / ".agent-router/hook/zpp-session.json").exists()
+    assert not (tmp_path / ".z-agent-router").exists()

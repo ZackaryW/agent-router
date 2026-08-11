@@ -12,6 +12,7 @@ from agent_router.core.models import (
     UnsupportedScopeError,
 )
 from agent_router.core.router import AgentRouter
+from agent_router.utils.gitignore import GitIgnorePolicy, IgnoreMode
 from agent_router.core.plugins import (
     AgentEnvironment,
     ArtifactEffectiveState,
@@ -46,6 +47,8 @@ __all__ = [
     "ConflictError",
     "Hook",
     "HookTransition",
+    "GitIgnorePolicy",
+    "IgnoreMode",
     "InvalidAssetError",
     "LifecycleResult",
     "PluginActivation",

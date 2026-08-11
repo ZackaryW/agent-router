@@ -12,6 +12,8 @@ from agent_router import (
     AgentRouter,
     AgentRouterError,
     Hook,
+    GitIgnorePolicy,
+    IgnoreMode,
     LifecycleResult,
     Scope,
     Skill,
@@ -32,6 +34,8 @@ DestinationOption = Annotated[Path | None, typer.Option("--destination")]
 JsonOption = Annotated[bool, typer.Option("--json")]
 ConversionOption = Annotated[bool, typer.Option("--allow-conversion")]
 PredecessorOption = Annotated[list[Path] | None, typer.Option("--predecessor")]
+IgnorePolicyOption = Annotated[IgnoreMode, typer.Option("--ignore-policy")]
+IgnorePatternOption = Annotated[list[str] | None, typer.Option("--ignore-pattern")]
 
 
 def _run(action: Callable[[], LifecycleResult], json_output: bool) -> None:
@@ -103,6 +107,39 @@ def install_skill(
             project_root=project_root,
             destination=destination,
             allow_conversion=allow_conversion,
+        ),
+        json_output,
+    )
+
+
+@skill_app.command("update")
+def update_skill(
+    source: Path,
+    agent: AgentOption,
+    scope: ScopeOption = Scope.USER,
+    project_root: ProjectOption = None,
+    destination: DestinationOption = None,
+    ignore_policy: IgnorePolicyOption = IgnoreMode.EXACT,
+    ignore_pattern: IgnorePatternOption = None,
+    json_output: JsonOption = False,
+) -> None:
+    patterns = ignore_pattern or []
+    try:
+        if len(patterns) > 1:
+            raise ValueError("pattern ignore policy requires one pattern")
+        policy = GitIgnorePolicy(
+            ignore_policy,
+            patterns[0] if patterns else None,
+        )
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--ignore-pattern") from error
+    _run(
+        lambda: AgentRouter(_one_agent(agent)).update_skill(
+            Skill.from_path(source),
+            scope=scope,
+            project_root=project_root,
+            destination=destination,
+            ignore_policy=policy,
         ),
         json_output,
     )

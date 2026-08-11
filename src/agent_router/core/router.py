@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 from agent_router.core.assets import Hook, Skill, fragment_fingerprint
@@ -12,6 +12,7 @@ from agent_router.core.models import (
     ConflictError,
     HookTransition,
     LifecycleResult,
+    InvalidAssetError,
     Scope,
     UnsupportedAssetError,
     UnsupportedScopeError,
@@ -37,7 +38,13 @@ from agent_router.utils.destinations import (
     UnsupportedDestinationError,
     resolve_destination,
 )
-from agent_router.utils.mutation import MutationPlan, Write, apply_mutation
+from agent_router.utils.mutation import (
+    DirectoryProjection,
+    MutationPlan,
+    RelativeWrite,
+    Write,
+    apply_mutation,
+)
 from agent_router.utils.native_hooks import (
     HookFragmentState,
     HookDocumentError,
@@ -53,14 +60,27 @@ from agent_router.utils.native_hooks import (
     serialize_toml,
 )
 from agent_router.utils.ownership import (
+    OwnershipEvidence,
     OwnershipError,
     OwnershipRecord,
     classify_ownership,
-    load_ownership,
-    ownership_path,
+    load_ownership_evidence,
     serialize_ownership,
 )
 from agent_router.utils.process import ProcessRunner, run_process
+from agent_router.utils.router_state import (
+    RouterStateError,
+    StateLocations,
+    ownership_locations,
+    resolve_state_root,
+)
+from agent_router.utils.gitignore import (
+    GitIgnoreError,
+    GitIgnorePlan,
+    GitIgnorePolicy,
+    plan_gitignore,
+    verify_gitignore,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +106,7 @@ class AgentRouter:
         self.agent = Agent(agent)
         self.home = Path(home).resolve() if home is not None else Path.home().resolve()
         self.environment = environment or AgentEnvironment(self.home, Path.cwd())
+        self._process_runner = process_runner
         self._plugins = PluginManager(
             self.agent, self.environment, extensions, process_runner
         )
@@ -136,7 +157,14 @@ class AgentRouter:
         )
         target = resolved.path / skill.name
         state, _ = self._inspect_dedicated(
-            resolved, AssetKind.SKILL, skill.name, target, skill.fingerprint
+            resolved,
+            AssetKind.SKILL,
+            skill.name,
+            target,
+            skill.fingerprint,
+            self._ownership_locations(
+                resolved, AssetKind.SKILL, skill.name, selected_scope, project_root
+            ),
         )
         if self.agent not in skill.compatible_agents:
             state = "unsupported"
@@ -170,12 +198,20 @@ class AgentRouter:
             AssetKind.SKILL, selected_scope, project_root, destination
         )
         target = resolved.path / skill.name
-        state, manifest = self._inspect_dedicated(
-            resolved, AssetKind.SKILL, skill.name, target, skill.fingerprint
+        locations = self._ownership_locations(
+            resolved, AssetKind.SKILL, skill.name, selected_scope, project_root
+        )
+        state, evidence = self._inspect_dedicated(
+            resolved,
+            AssetKind.SKILL,
+            skill.name,
+            target,
+            skill.fingerprint,
+            locations,
         )
         if state in {"unmanaged", "conflict"}:
             raise ConflictError(f"conflicting skill destination: {target}")
-        if state == "current":
+        if state == "current" and evidence.source == "current":
             return self._result(
                 "install",
                 AssetKind.SKILL,
@@ -194,19 +230,157 @@ class AgentRouter:
             skill.fingerprint,
             {"target_name": skill.name, "target_type": "directory"},
         )
+        if state == "current":
+            apply_mutation(
+                MutationPlan(
+                    (Write(locations.current, serialize_ownership(record)),),
+                    (locations.legacy,),
+                    prune_empty=self._legacy_prune(locations, evidence),
+                )
+            )
+            return self._result(
+                "install",
+                AssetKind.SKILL,
+                skill.name,
+                selected_scope,
+                resolved,
+                "updated",
+                skill.compatible_agents,
+            )
         writes = tuple(
             Write(target.joinpath(*item.relative_path.split("/")), item.content)
             for item in skill.files
-        ) + (Write(manifest, serialize_ownership(record)),)
-        replacements = (target,) if state == "outdated" else ()
-        apply_mutation(MutationPlan(writes, replacements))
+        ) + (Write(locations.current, serialize_ownership(record)),)
+        replacements = ((target,) if state == "outdated" else ()) + (
+            (locations.legacy,)
+            if evidence.source in {"legacy", "duplicate"}
+            else ()
+        )
+        apply_mutation(
+            MutationPlan(
+                writes,
+                replacements,
+                prune_empty=self._legacy_prune(locations, evidence),
+            )
+        )
         return self._result(
             "install",
             AssetKind.SKILL,
             skill.name,
             selected_scope,
             resolved,
-            "updated" if state == "outdated" else "installed",
+            "updated"
+            if state == "outdated" or evidence.source in {"legacy", "duplicate"}
+            else "installed",
+            skill.compatible_agents,
+        )
+
+    def update_skill(
+        self,
+        skill: Skill,
+        *,
+        scope: Scope = Scope.PROJECT,
+        project_root: str | Path | None = None,
+        destination: str | Path | None = None,
+        ignore_policy: GitIgnorePolicy = GitIgnorePolicy(),
+    ) -> LifecycleResult:
+        selected_scope = Scope(scope)
+        if selected_scope is not Scope.PROJECT or project_root is None:
+            raise UnsupportedScopeError(
+                "skill update requires project scope and an explicit project root"
+            )
+        if self.agent not in skill.compatible_agents:
+            raise UnsupportedAssetError(
+                f"skill {skill.name!r} is not natively compatible with {self.agent.value}"
+            )
+        resolved = self._destination(
+            AssetKind.SKILL, selected_scope, project_root, destination
+        )
+        target = resolved.path / skill.name
+        if target.is_symlink() or not target.is_dir():
+            raise ConflictError(
+                f"skill update target is not an existing regular directory: {target}"
+            )
+        locations = self._ownership_locations(
+            resolved, AssetKind.SKILL, skill.name, selected_scope, project_root
+        )
+        try:
+            evidence = load_ownership_evidence(locations)
+        except OwnershipError as error:
+            raise ConflictError(str(error)) from error
+        if evidence.record is not None and not self._record_matches(
+            evidence.record, AssetKind.SKILL, skill.name, resolved
+        ):
+            raise ConflictError(f"conflicting skill ownership state: {target}")
+
+        state_root = self._state_root(selected_scope, project_root)
+        try:
+            ignore = plan_gitignore(
+                project_root=Path(project_root),
+                target=target,
+                state_root=state_root,
+                policy=ignore_policy,
+                runner=self._process_runner,
+            )
+        except GitIgnoreError as error:
+            raise InvalidAssetError(str(error)) from error
+        try:
+            current_fingerprint = _fingerprint_path(target)
+        except (AssetError, OSError, ValueError) as error:
+            raise ConflictError(f"unsafe skill update target: {target}") from error
+        record = OwnershipRecord(
+            self.agent.value,
+            AssetKind.SKILL.value,
+            skill.name,
+            str(resolved.path.resolve()),
+            skill.fingerprint,
+            {"target_name": skill.name, "target_type": "directory"},
+        )
+        writes: tuple[Write, ...] = (
+            Write(locations.current, serialize_ownership(record)),
+        )
+        checks = ()
+        if ignore is not None:
+            if ignore.content is not None:
+                writes += (Write(ignore.ignore_file, ignore.content),)
+            checks = (self._gitignore_verification(ignore),)
+        projection = (
+            ()
+            if current_fingerprint == skill.fingerprint
+            else (
+                DirectoryProjection(
+                    target,
+                    tuple(
+                        RelativeWrite(PurePosixPath(item.relative_path), item.content)
+                        for item in skill.files
+                    ),
+                ),
+            )
+        )
+        replacements = (
+            (locations.legacy,)
+            if evidence.source in {"legacy", "duplicate"}
+            else ()
+        )
+        try:
+            apply_mutation(
+                MutationPlan(
+                    writes,
+                    replacements,
+                    projections=projection,
+                    prune_empty=self._legacy_prune(locations, evidence),
+                    before_projection_swap=checks,
+                )
+            )
+        except GitIgnoreError as error:
+            raise InvalidAssetError(str(error)) from error
+        return self._result(
+            "update",
+            AssetKind.SKILL,
+            skill.name,
+            selected_scope,
+            resolved,
+            "no-op" if not projection else "updated",
             skill.compatible_agents,
         )
 
@@ -222,17 +396,37 @@ class AgentRouter:
         resolved = self._destination(
             AssetKind.SKILL, selected_scope, project_root, destination
         )
-        manifest = ownership_path(resolved, AssetKind.SKILL.value, name)
-        record = self._require_record(manifest, AssetKind.SKILL, name, resolved)
+        locations = self._ownership_locations(
+            resolved, AssetKind.SKILL, name, selected_scope, project_root
+        )
+        evidence = self._require_record(locations, AssetKind.SKILL, name, resolved)
+        record = evidence.record
+        assert record is not None
         target = resolved.path / name
         state, _ = self._inspect_dedicated(
-            resolved, AssetKind.SKILL, name, target, record.fingerprint
+            resolved,
+            AssetKind.SKILL,
+            name,
+            target,
+            record.fingerprint,
+            locations,
         )
         if state != "current":
             raise ConflictError(
                 f"skill is not an intact agent-router installation: {target}"
             )
-        apply_mutation(MutationPlan((), (target, manifest)))
+        apply_mutation(
+            MutationPlan(
+                (),
+                (target,)
+                + tuple(
+                    path
+                    for path in (locations.current, locations.legacy)
+                    if path.exists() or path.is_symlink()
+                ),
+                prune_empty=self._legacy_prune(locations, evidence),
+            )
+        )
         return self._result(
             "uninstall", AssetKind.SKILL, name, selected_scope, resolved, "removed"
         )
@@ -266,15 +460,18 @@ class AgentRouter:
         selected_predecessors = self._validate_hook_predecessors(
             hook, predecessors, resolved, fragment
         )
+        locations = self._ownership_locations(
+            resolved, AssetKind.HOOK, hook.name, selected_scope, project_root
+        )
         if resolved.shared_config:
             analysis = self._inspect_shared_hook(
-                resolved, hook, fragment, selected_predecessors
+                resolved, hook, fragment, selected_predecessors, locations
             )
             state = analysis.status
             transition = analysis.transition
         else:
             analysis = self._inspect_dedicated_hook(
-                resolved, hook, selected_predecessors
+                resolved, hook, selected_predecessors, locations
             )
             state = analysis.status
             transition = analysis.transition
@@ -308,13 +505,16 @@ class AgentRouter:
         selected_predecessors = self._validate_hook_predecessors(
             hook, predecessors, resolved, fragment
         )
+        locations = self._ownership_locations(
+            resolved, AssetKind.HOOK, hook.name, selected_scope, project_root
+        )
         if resolved.shared_config:
             state, transition = self._install_shared(
-                resolved, hook, fragment, selected_predecessors
+                resolved, hook, fragment, selected_predecessors, locations
             )
         else:
             state, transition = self._install_hook_projection(
-                resolved, hook, selected_predecessors
+                resolved, hook, selected_predecessors, locations
             )
         return self._result(
             "install",
@@ -340,15 +540,35 @@ class AgentRouter:
         resolved = self._destination(
             AssetKind.HOOK, selected_scope, project_root, destination
         )
-        manifest = ownership_path(resolved, AssetKind.HOOK.value, name)
-        record = self._require_record(manifest, AssetKind.HOOK, name, resolved)
+        locations = self._ownership_locations(
+            resolved, AssetKind.HOOK, name, selected_scope, project_root
+        )
+        evidence = self._require_record(locations, AssetKind.HOOK, name, resolved)
+        record = evidence.record
+        assert record is not None
+        state_paths = tuple(
+            path
+            for path in (locations.current, locations.legacy)
+            if path.exists() or path.is_symlink()
+        )
         if resolved.shared_config:
-            transition = self._uninstall_shared(resolved, record, manifest)
+            transition = self._uninstall_shared(
+                resolved,
+                record,
+                state_paths,
+                self._legacy_prune(locations, evidence),
+            )
         else:
             details = cast(dict[str, object], record.fragment)
             target = resolved.path / str(details["target_name"])
             if not target.exists() and not target.is_symlink():
-                apply_mutation(MutationPlan((), (manifest,)))
+                apply_mutation(
+                    MutationPlan(
+                        (),
+                        state_paths,
+                        prune_empty=self._legacy_prune(locations, evidence),
+                    )
+                )
                 transition = HookTransition.OWNED_REMOVED
             else:
                 try:
@@ -366,7 +586,13 @@ class AgentRouter:
                     raise ConflictError(
                         f"hook is not an intact agent-router installation: {target}"
                     )
-                apply_mutation(MutationPlan((), (target, manifest)))
+                apply_mutation(
+                    MutationPlan(
+                        (),
+                        (target,) + state_paths,
+                        prune_empty=self._legacy_prune(locations, evidence),
+                    )
+                )
                 transition = None
         return self._result(
             "uninstall",
@@ -402,6 +628,63 @@ class AgentRouter:
             else native
         )
 
+    def _state_root(
+        self, scope: Scope, project_root: str | Path | None
+    ) -> Path:
+        try:
+            return resolve_state_root(
+                scope.value,
+                home=self.home,
+                project_root=(
+                    Path(project_root).resolve() if project_root is not None else None
+                ),
+            )
+        except RouterStateError as error:
+            raise UnsupportedScopeError(str(error)) from error
+
+    def _ownership_locations(
+        self,
+        destination: Destination,
+        kind: AssetKind,
+        name: str,
+        scope: Scope,
+        project_root: str | Path | None,
+    ) -> StateLocations:
+        try:
+            return ownership_locations(
+                state_root=self._state_root(scope, project_root),
+                destination=destination,
+                agent=self.agent.value,
+                kind=kind.value,
+                name=name,
+            )
+        except RouterStateError as error:
+            raise UnsupportedScopeError(str(error)) from error
+
+    def _gitignore_verification(self, plan: GitIgnorePlan) -> Callable[[], None]:
+        return lambda: verify_gitignore(plan, runner=self._process_runner)
+
+    def _legacy_prune(
+        self, locations: StateLocations, evidence: OwnershipEvidence
+    ) -> tuple[Path, ...]:
+        if evidence.source not in {"legacy", "duplicate"}:
+            return ()
+        return (locations.legacy.parent, locations.legacy.parent.parent)
+
+    def _record_matches(
+        self,
+        record: OwnershipRecord,
+        kind: AssetKind,
+        name: str,
+        destination: Destination,
+    ) -> bool:
+        return (
+            record.agent == self.agent.value
+            and record.kind == kind.value
+            and record.name == name
+            and record.destination == str(destination.path.resolve())
+        )
+
     def _inspect_dedicated(
         self,
         destination: Destination,
@@ -409,12 +692,13 @@ class AgentRouter:
         name: str,
         target: Path,
         expected_fingerprint: str,
+        locations: StateLocations,
         *,
         fingerprint_name: str | None = None,
-    ) -> tuple[str, Path]:
-        manifest = ownership_path(destination, kind.value, name)
+    ) -> tuple[str, OwnershipEvidence]:
+        evidence = OwnershipEvidence(None, locations, "none")
         try:
-            record = load_ownership(manifest)
+            evidence = load_ownership_evidence(locations)
             present = target.exists() or target.is_symlink()
             actual = (
                 _fingerprint_path(target, fingerprint_name=fingerprint_name)
@@ -422,7 +706,7 @@ class AgentRouter:
                 else None
             )
             state = classify_ownership(
-                record,
+                evidence.record,
                 agent=self.agent.value,
                 kind=kind.value,
                 name=name,
@@ -433,7 +717,7 @@ class AgentRouter:
             )
         except (AssetError, OwnershipError, OSError, ValueError):
             state = "conflict"
-        return state, manifest
+        return state, evidence
 
     def _hook_fragment(self, hook: Hook, allow_conversion: bool) -> tuple[object, bool]:
         if self.agent in hook.compatible_agents:
@@ -512,10 +796,12 @@ class AgentRouter:
         destination: Destination,
         current: Hook,
         predecessors: Sequence[Hook],
+        locations: StateLocations,
     ) -> _HookReconciliation:
-        manifest = ownership_path(destination, AssetKind.HOOK.value, current.name)
+        manifest = locations.current
         try:
-            record = load_ownership(manifest)
+            evidence = load_ownership_evidence(locations)
+            record = evidence.record
             if record is not None and (
                 record.agent != self.agent.value
                 or record.kind != AssetKind.HOOK.value
@@ -628,16 +914,36 @@ class AgentRouter:
         self,
         destination: Destination,
         hook: Hook,
-        predecessors: Sequence[Hook] = (),
+        predecessors: Sequence[Hook],
+        locations: StateLocations,
     ) -> tuple[str, HookTransition | None]:
         target, expected, fingerprint_name = self._hook_projection(destination, hook)
         analysis = self._inspect_dedicated_hook(
-            destination, hook, predecessors
+            destination, hook, predecessors, locations
         )
         if analysis.status in {"unmanaged", "conflict"}:
             raise ConflictError(f"conflicting hook destination: {target}")
-        if analysis.status == "current":
+        legacy_present = locations.legacy.exists() or locations.legacy.is_symlink()
+        if analysis.status == "current" and not legacy_present:
             return "no-op", None
+        if analysis.status == "current":
+            assert analysis.record is not None
+            evidence = OwnershipEvidence(
+                analysis.record, locations, "legacy"
+            )
+            apply_mutation(
+                MutationPlan(
+                    (
+                        Write(
+                            locations.current,
+                            serialize_ownership(analysis.record),
+                        ),
+                    ),
+                    (locations.legacy,),
+                    prune_empty=self._legacy_prune(locations, evidence),
+                )
+            )
+            return "updated", None
         if hook.format == "pi-file":
             writes = (Write(target, hook.files[0].content),)
             target_type = "file"
@@ -674,11 +980,24 @@ class AgentRouter:
         ):
             details = self._dedicated_record_details(analysis.record)
             replacements.add(destination.path / details["target_name"])
-        if analysis.manifest.exists() or analysis.manifest.is_symlink():
-            replacements.add(analysis.manifest)
-        apply_mutation(MutationPlan(writes, tuple(sorted(replacements))))
+        if legacy_present:
+            replacements.add(locations.legacy)
+        evidence = OwnershipEvidence(
+            analysis.record,
+            locations,
+            "legacy" if legacy_present else "current",
+        )
+        apply_mutation(
+            MutationPlan(
+                writes,
+                tuple(sorted(replacements)),
+                prune_empty=self._legacy_prune(locations, evidence),
+            )
+        )
         return (
-            "updated" if analysis.status == "outdated" else "installed",
+            "updated"
+            if analysis.status == "outdated" or legacy_present
+            else "installed",
             analysis.transition,
         )
 
@@ -709,10 +1028,11 @@ class AgentRouter:
         current: Hook,
         expected_fragment: object,
         predecessors: Sequence[Hook],
+        locations: StateLocations,
     ) -> _HookReconciliation:
-        manifest = ownership_path(destination, AssetKind.HOOK.value, current.name)
+        manifest = locations.current
         try:
-            record = load_ownership(manifest)
+            record = load_ownership_evidence(locations).record
             if record is not None and (
                 record.agent != self.agent.value
                 or record.kind != AssetKind.HOOK.value
@@ -827,14 +1147,34 @@ class AgentRouter:
         hook: Hook,
         fragment: object,
         predecessors: Sequence[Hook],
+        locations: StateLocations,
     ) -> tuple[str, HookTransition | None]:
         analysis = self._inspect_shared_hook(
-            destination, hook, fragment, predecessors
+            destination, hook, fragment, predecessors, locations
         )
         if analysis.status in {"unmanaged", "conflict"}:
             raise ConflictError(f"conflicting hook destination: {destination.path}")
-        if analysis.status == "current":
+        legacy_present = locations.legacy.exists() or locations.legacy.is_symlink()
+        if analysis.status == "current" and not legacy_present:
             return "no-op", None
+        if analysis.status == "current":
+            assert analysis.record is not None
+            evidence = OwnershipEvidence(
+                analysis.record, locations, "legacy"
+            )
+            apply_mutation(
+                MutationPlan(
+                    (
+                        Write(
+                            locations.current,
+                            serialize_ownership(analysis.record),
+                        ),
+                    ),
+                    (locations.legacy,),
+                    prune_empty=self._legacy_prune(locations, evidence),
+                )
+            )
+            return "updated", None
         source = analysis.shared_source
         removed: set[str] = set()
         if analysis.predecessor is not None:
@@ -868,8 +1208,13 @@ class AgentRouter:
         )
         replacements = tuple(
             path
-            for path in (destination.path, analysis.manifest)
+            for path in (destination.path, locations.legacy)
             if path.exists() or path.is_symlink()
+        )
+        evidence = OwnershipEvidence(
+            analysis.record,
+            locations,
+            "legacy" if legacy_present else "current",
         )
         apply_mutation(
             MutationPlan(
@@ -878,10 +1223,13 @@ class AgentRouter:
                     Write(analysis.manifest, serialize_ownership(record)),
                 ),
                 replacements,
+                prune_empty=self._legacy_prune(locations, evidence),
             )
         )
         return (
-            "updated" if analysis.status == "outdated" else "installed",
+            "updated"
+            if analysis.status == "outdated" or legacy_present
+            else "installed",
             analysis.transition,
         )
 
@@ -927,7 +1275,11 @@ class AgentRouter:
         return probe_kimi_hooks(cast(bytes | None, source), cast(list[dict], fragment))
 
     def _uninstall_shared(
-        self, destination: Destination, record: OwnershipRecord, manifest: Path
+        self,
+        destination: Destination,
+        record: OwnershipRecord,
+        state_paths: tuple[Path, ...],
+        prune_empty: tuple[Path, ...],
     ) -> HookTransition | None:
         source = self._load_shared_source(destination)
         count, _ = self._shared_exact_count(source, record.fragment)
@@ -938,7 +1290,9 @@ class AgentRouter:
                 raise ConflictError(
                     f"hook is not an intact agent-router installation: {destination.path}"
                 )
-            apply_mutation(MutationPlan((), (manifest,)))
+            apply_mutation(
+                MutationPlan((), state_paths, prune_empty=prune_empty)
+            )
             return HookTransition.OWNED_REMOVED
         if count != 1:
             raise ConflictError(
@@ -961,24 +1315,27 @@ class AgentRouter:
         apply_mutation(
             MutationPlan(
                 (Write(destination.path, content),),
-                (destination.path, manifest),
+                (destination.path,) + state_paths,
+                prune_empty=prune_empty,
             )
         )
         return None
 
     def _require_record(
-        self, path: Path, kind: AssetKind, name: str, destination: Destination
-    ) -> OwnershipRecord:
+        self,
+        locations: StateLocations,
+        kind: AssetKind,
+        name: str,
+        destination: Destination,
+    ) -> OwnershipEvidence:
         try:
-            record = load_ownership(path)
+            evidence = load_ownership_evidence(locations)
+            record = evidence.record
         except OwnershipError as error:
             raise ConflictError(str(error)) from error
         if (
             record is None
-            or record.agent != self.agent.value
-            or record.kind != kind.value
-            or record.name != name
-            or record.destination != str(destination.path.resolve())
+            or not self._record_matches(record, kind, name, destination)
         ):
             raise ConflictError(
                 f"{kind.value} {name!r} was not installed by agent-router at {destination.path}"
@@ -1006,7 +1363,7 @@ class AgentRouter:
                     )
                 ):
                     raise ConflictError("hook ownership projection is invalid")
-        return record
+        return evidence
 
     def _result(
         self,
