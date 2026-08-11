@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from agent_router.utils.destinations import Destination
+from agent_router.utils.router_state import StateLocations
 
 OwnershipState = Literal["absent", "unmanaged", "current", "outdated", "conflict"]
 _NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -25,6 +26,13 @@ class OwnershipRecord:
     fingerprint: str
     fragment: object | None = None
     schema_version: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class OwnershipEvidence:
+    record: OwnershipRecord | None
+    locations: StateLocations
+    source: Literal["none", "current", "legacy", "duplicate"]
 
 
 def ownership_path(destination: Destination, kind: str, name: str) -> Path:
@@ -65,6 +73,20 @@ def load_ownership(path: Path) -> OwnershipRecord | None:
     ) as error:
         raise OwnershipError(f"ownership record is invalid: {path}") from error
     return record
+
+
+def load_ownership_evidence(locations: StateLocations) -> OwnershipEvidence:
+    current = load_ownership(locations.current)
+    legacy = load_ownership(locations.legacy)
+    if current is not None and legacy is not None:
+        if current != legacy:
+            raise OwnershipError("current and legacy ownership records diverge")
+        return OwnershipEvidence(current, locations, "duplicate")
+    if current is not None:
+        return OwnershipEvidence(current, locations, "current")
+    if legacy is not None:
+        return OwnershipEvidence(legacy, locations, "legacy")
+    return OwnershipEvidence(None, locations, "none")
 
 
 def classify_ownership(

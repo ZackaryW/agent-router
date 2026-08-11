@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from agent_router.utils.mutation import atomic_write
+from agent_router.utils.router_state import StateLocations
 
 _AGENTS = {"codex", "claude", "kimi", "pi"}
 _ARTIFACT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -43,8 +44,22 @@ class PluginState:
     schema_version: int = 1
 
 
+@dataclass(frozen=True, slots=True)
+class PluginStateEvidence:
+    state: PluginState
+    locations: StateLocations
+    source: Literal["none", "current", "legacy", "duplicate"]
+
+
 def plugin_state_path(state_root: Path) -> Path:
     return state_root / ".agent-router" / "plugins.json"
+
+
+def plugin_state_locations(*, state_root: Path, legacy_root: Path) -> StateLocations:
+    return StateLocations(
+        Path(state_root).resolve() / "plugins.json",
+        plugin_state_path(Path(legacy_root).resolve()),
+    )
 
 
 def load_plugin_state(path: Path) -> PluginState:
@@ -61,6 +76,22 @@ def load_plugin_state(path: Path) -> PluginState:
         if isinstance(error, PluginStateError):
             raise
         raise PluginStateError(f"plugin state is invalid: {path}") from error
+
+
+def load_plugin_state_evidence(locations: StateLocations) -> PluginStateEvidence:
+    current_present = locations.current.exists() or locations.current.is_symlink()
+    legacy_present = locations.legacy.exists() or locations.legacy.is_symlink()
+    current = load_plugin_state(locations.current) if current_present else None
+    legacy = load_plugin_state(locations.legacy) if legacy_present else None
+    if current is not None and legacy is not None:
+        if current != legacy:
+            raise PluginStateError("current and legacy plugin state diverge")
+        return PluginStateEvidence(current, locations, "duplicate")
+    if current is not None:
+        return PluginStateEvidence(current, locations, "current")
+    if legacy is not None:
+        return PluginStateEvidence(legacy, locations, "legacy")
+    return PluginStateEvidence(PluginState(), locations, "none")
 
 
 def serialize_plugin_state(state: PluginState) -> bytes:

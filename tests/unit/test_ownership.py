@@ -4,13 +4,16 @@ import pytest
 
 from agent_router.utils.destinations import Destination
 from agent_router.utils.ownership import (
+    OwnershipEvidence,
     OwnershipError,
     OwnershipRecord,
     classify_ownership,
+    load_ownership_evidence,
     load_ownership,
     ownership_path,
     serialize_ownership,
 )
+from agent_router.utils.router_state import StateLocations
 
 
 def record_for(path: Path, fingerprint: str = "a" * 64) -> OwnershipRecord:
@@ -99,3 +102,43 @@ def test_rejects_a_record_copied_to_another_destination(tmp_path: Path) -> None:
     )
 
     assert result == "conflict"
+
+
+def test_loads_current_ownership_evidence(tmp_path: Path) -> None:
+    locations = StateLocations(tmp_path / "current.json", tmp_path / "legacy.json")
+    locations.current.write_bytes(serialize_ownership(record_for(tmp_path / "skills")))
+
+    assert load_ownership_evidence(locations) == OwnershipEvidence(
+        record_for(tmp_path / "skills"), locations, "current"
+    )
+
+
+@pytest.mark.parametrize(
+    ("present", "source"),
+    [((), "none"), (("legacy",), "legacy"), (("current", "legacy"), "duplicate")],
+)
+def test_distinguishes_compatible_ownership_evidence_locations(
+    tmp_path: Path, present: tuple[str, ...], source: str
+) -> None:
+    locations = StateLocations(tmp_path / "current.json", tmp_path / "legacy.json")
+    record = record_for(tmp_path / "skills")
+    for selected in present:
+        getattr(locations, selected).write_bytes(serialize_ownership(record))
+
+    evidence = load_ownership_evidence(locations)
+
+    assert evidence.record == (record if present else None)
+    assert evidence.source == source
+
+
+def test_rejects_divergent_current_and_legacy_ownership(tmp_path: Path) -> None:
+    locations = StateLocations(tmp_path / "current.json", tmp_path / "legacy.json")
+    locations.current.write_bytes(
+        serialize_ownership(record_for(tmp_path / "skills", "a" * 64))
+    )
+    locations.legacy.write_bytes(
+        serialize_ownership(record_for(tmp_path / "skills", "b" * 64))
+    )
+
+    with pytest.raises(OwnershipError, match="diverge"):
+        load_ownership_evidence(locations)

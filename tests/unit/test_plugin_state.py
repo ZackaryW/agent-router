@@ -8,10 +8,13 @@ from agent_router.utils.plugin_state import (
     ArtifactPolicyOverride,
     PluginOwnershipReceipt,
     PluginState,
+    PluginStateEvidence,
     PluginStateError,
     PluginStateKey,
     clear_artifact_policy,
     load_plugin_state,
+    load_plugin_state_evidence,
+    plugin_state_locations,
     plugin_state_path,
     put_receipt,
     remove_receipt,
@@ -117,3 +120,70 @@ def test_plugin_state_rejects_duplicate_stable_keys() -> None:
 
 def test_absent_plugin_state_is_empty(tmp_path) -> None:
     assert load_plugin_state(plugin_state_path(tmp_path)) == PluginState()
+
+
+def test_resolves_and_loads_current_plugin_state_evidence(tmp_path) -> None:
+    locations = plugin_state_locations(
+        state_root=tmp_path / ".z-agent-router", legacy_root=tmp_path
+    )
+    state = PluginState(
+        receipts=(
+            PluginOwnershipReceipt(PluginStateKey("codex", "user", "example"), None),
+        )
+    )
+    locations.current.parent.mkdir(parents=True)
+    locations.current.write_bytes(serialize_plugin_state(state))
+
+    assert locations.current == tmp_path / ".z-agent-router" / "plugins.json"
+    assert locations.legacy == tmp_path / ".agent-router" / "plugins.json"
+    assert load_plugin_state_evidence(locations) == PluginStateEvidence(
+        state, locations, "current"
+    )
+
+
+@pytest.mark.parametrize(
+    ("present", "source"),
+    [((), "none"), (("legacy",), "legacy"), (("current", "legacy"), "duplicate")],
+)
+def test_distinguishes_compatible_plugin_state_evidence_locations(
+    tmp_path, present, source
+) -> None:
+    locations = plugin_state_locations(
+        state_root=tmp_path / ".z-agent-router", legacy_root=tmp_path
+    )
+    state = PluginState(
+        receipts=(
+            PluginOwnershipReceipt(PluginStateKey("codex", "user", "example"), None),
+        )
+    )
+    for selected in present:
+        path = getattr(locations, selected)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(serialize_plugin_state(state))
+
+    evidence = load_plugin_state_evidence(locations)
+
+    assert evidence.state == (state if present else PluginState())
+    assert evidence.source == source
+
+
+def test_rejects_divergent_current_and_legacy_plugin_state(tmp_path) -> None:
+    locations = plugin_state_locations(
+        state_root=tmp_path / ".z-agent-router", legacy_root=tmp_path
+    )
+    current = PluginState(
+        receipts=(
+            PluginOwnershipReceipt(PluginStateKey("codex", "user", "current"), None),
+        )
+    )
+    legacy = PluginState(
+        receipts=(
+            PluginOwnershipReceipt(PluginStateKey("codex", "user", "legacy"), None),
+        )
+    )
+    for path, state in ((locations.current, current), (locations.legacy, legacy)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(serialize_plugin_state(state))
+
+    with pytest.raises(PluginStateError, match="diverge"):
+        load_plugin_state_evidence(locations)
