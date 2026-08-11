@@ -37,6 +37,20 @@ print(result.status, result.destination)
 router.uninstall_skill(skill.name)
 ```
 
+Default uninstall preserves a managed skill whose projected content was
+modified. Recovery tooling can explicitly discard a modified but still
+proven-owned skill through the Python library:
+
+```python
+router.uninstall_skill(skill.name, force=True)
+```
+
+Forced uninstall still requires a valid matching Agent Router ownership record,
+never deletes a present unmanaged target, removes the exact target without
+following a symbolic link, and retains no backup or history after success. A
+wholly absent target and ownership record is an `absent` no-op. The optional CLI
+does not expose forced deletion.
+
 Every router is bound to one agent. Operations use user scope by default;
 project scope requires an explicit project root.
 
@@ -159,9 +173,10 @@ or ownership behavior.
 | Kimi Code CLI | user and project | user only |
 | Pi | user and project | user and project extensions |
 
-The Codex user skill root is `~/.codex/skills`. Uninstall removes only an intact
-projection previously installed by `agent-router`; unmanaged or modified content
-fails closed.
+The Codex user skill root is `~/.codex/skills`. Default uninstall removes only an
+intact projection previously installed by `agent-router`; unmanaged or modified
+content fails closed. Explicit Python `force=True` is the narrow proven-owned
+exception described above.
 
 ## Router state
 
