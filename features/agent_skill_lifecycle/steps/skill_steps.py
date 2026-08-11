@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -99,6 +100,36 @@ def given_unsafe_skill(context, state: str) -> None:
         )
 
 
+@given("a managed skill modified after installation")
+def given_modified_managed_skill(context) -> None:
+    given_installed_skill(context)
+    (context.destination / "reviewer" / "SKILL.md").write_text(
+        "modified",
+        encoding="utf-8",
+    )
+
+
+@given("a neighboring skill outside the owned target")
+def given_neighboring_skill(context) -> None:
+    assert (context.neighbor / "note.txt").is_file()
+
+
+@given("a managed skill target removed outside agent-router")
+def given_missing_managed_skill(context) -> None:
+    given_installed_skill(context)
+    shutil.rmtree(context.destination / "reviewer")
+
+
+@given("no skill target or ownership record exists")
+def given_absent_skill(context) -> None:
+    context.destination = context.root / "skills"
+
+
+@given("the optional agent-router command is available")
+def given_command_available(context) -> None:
+    context.command_runner = CliRunner()
+
+
 @when("I inspect the skill for {agent}")
 def inspect_skill(context, agent: str) -> None:
     selected = Agent(agent.lower())
@@ -158,6 +189,26 @@ def uninstall_skill(context) -> None:
         lambda: _router(context).uninstall_skill(
             "reviewer", destination=context.destination
         ),
+    )
+
+
+@when("I force-uninstall the skill through the Python library")
+def force_uninstall_skill(context) -> None:
+    _capture(
+        context,
+        lambda: _router(context).uninstall_skill(
+            "reviewer",
+            destination=context.destination,
+            force=True,
+        ),
+    )
+
+
+@when("I inspect skill uninstall help")
+def inspect_uninstall_help(context) -> None:
+    context.command_result = context.command_runner.invoke(
+        app,
+        ["skill", "uninstall", "--help"],
     )
 
 
@@ -269,6 +320,52 @@ def owned_skill_removed(context) -> None:
 @then("neighboring skills are retained")
 def neighboring_skills_retained(context) -> None:
     assert context.neighbor.exists()
+
+
+@then("the exact owned skill and ownership records are removed")
+def forced_skill_and_state_removed(context) -> None:
+    assert context.error is None
+    assert not (context.destination / "reviewer").exists()
+    assert not tuple(context.home.rglob("reviewer.json"))
+
+
+@then("no backup or history of the removed skill is retained")
+def no_forced_removal_history(context) -> None:
+    assert not tuple(context.root.rglob(".reviewer.agent-router-*"))
+
+
+@then("the neighboring skill is retained")
+def forced_neighbor_retained(context) -> None:
+    neighboring_skills_retained(context)
+
+
+@then("its stale ownership records are removed")
+def stale_ownership_removed(context) -> None:
+    assert not tuple(context.home.rglob("reviewer.json"))
+
+
+@then("the lifecycle result reports removal")
+def lifecycle_reports_removal(context) -> None:
+    assert context.error is None
+    assert context.result.status == "removed"
+
+
+@then("the lifecycle result reports an absent no-op")
+def lifecycle_reports_absent(context) -> None:
+    assert context.error is None
+    assert context.result.status == "absent"
+
+
+@then("no destination or ownership state is created")
+def absent_force_creates_nothing(context) -> None:
+    assert not context.destination.exists()
+    assert not tuple(context.home.rglob("reviewer.json"))
+
+
+@then("no force deletion option is exposed")
+def no_command_force_option(context) -> None:
+    assert context.command_result.exit_code == 0
+    assert "--force" not in context.command_result.stdout
 
 
 @then("the request is rejected before destination mutation")

@@ -391,6 +391,7 @@ class AgentRouter:
         scope: Scope = Scope.USER,
         project_root: str | Path | None = None,
         destination: str | Path | None = None,
+        force: bool = False,
     ) -> LifecycleResult:
         selected_scope = Scope(scope)
         resolved = self._destination(
@@ -399,10 +400,63 @@ class AgentRouter:
         locations = self._ownership_locations(
             resolved, AssetKind.SKILL, name, selected_scope, project_root
         )
+        target = resolved.path / name
+        if force:
+            try:
+                evidence = load_ownership_evidence(locations)
+            except OwnershipError as error:
+                raise ConflictError(str(error)) from error
+            record = evidence.record
+            if record is None:
+                if target.exists() or target.is_symlink():
+                    raise ConflictError(
+                        f"skill {name!r} was not installed by agent-router at "
+                        f"{resolved.path}"
+                    )
+                return self._result(
+                    "uninstall",
+                    AssetKind.SKILL,
+                    name,
+                    selected_scope,
+                    resolved,
+                    "absent",
+                )
+            if not self._record_matches(
+                record,
+                AssetKind.SKILL,
+                name,
+                resolved,
+            ):
+                raise ConflictError(
+                    f"skill {name!r} has mismatched agent-router ownership at "
+                    f"{resolved.path}"
+                )
+            replacements = tuple(
+                path
+                for path in (target, locations.current, locations.legacy)
+                if path.exists() or path.is_symlink()
+            )
+            apply_mutation(
+                MutationPlan(
+                    (),
+                    replacements,
+                    prune_empty=self._legacy_prune(locations, evidence),
+                    allowed_symlink_replacements=(target,)
+                    if target.is_symlink()
+                    else (),
+                )
+            )
+            return self._result(
+                "uninstall",
+                AssetKind.SKILL,
+                name,
+                selected_scope,
+                resolved,
+                "removed",
+            )
         evidence = self._require_record(locations, AssetKind.SKILL, name, resolved)
         record = evidence.record
         assert record is not None
-        target = resolved.path / name
         state, _ = self._inspect_dedicated(
             resolved,
             AssetKind.SKILL,
