@@ -49,12 +49,23 @@ class MutationPlan:
     projections: tuple[DirectoryProjection, ...] = ()
     prune_empty: tuple[Path, ...] = ()
     before_projection_swap: tuple[Verification, ...] = ()
+    allowed_symlink_replacements: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         if len({write.path for write in self.writes}) != len(self.writes):
             raise ValueError("mutation plan contains duplicate writes")
         if len(set(self.replacements)) != len(self.replacements):
             raise ValueError("mutation plan contains duplicate replacements")
+        if len(set(self.allowed_symlink_replacements)) != len(
+            self.allowed_symlink_replacements
+        ):
+            raise ValueError(
+                "mutation plan contains duplicate symlink replacement authorization"
+            )
+        if not set(self.allowed_symlink_replacements).issubset(self.replacements):
+            raise ValueError(
+                "symlink replacement authorization must name exact replacements"
+            )
         if len({item.target for item in self.projections}) != len(self.projections):
             raise ValueError("mutation plan contains duplicate projections")
         for index, path in enumerate(self.replacements):
@@ -210,7 +221,11 @@ def _validate_filesystem_roles(plan: MutationPlan) -> None:
     for projection in plan.projections:
         if projection.target.is_symlink() or not projection.target.is_dir():
             raise ValueError("projection target must be an existing regular directory")
-    for path in (*plan.replacements, *(write.path for write in plan.writes)):
+    allowed_symlinks = set(plan.allowed_symlink_replacements)
+    for path in plan.replacements:
+        if path.is_symlink() and path not in allowed_symlinks:
+            raise ValueError("mutation path must not be a symbolic link")
+    for path in (write.path for write in plan.writes):
         if path.is_symlink():
             raise ValueError("mutation path must not be a symbolic link")
     for path in plan.prune_empty:

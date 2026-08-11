@@ -242,6 +242,77 @@ def test_rejects_a_symbolic_link_projection_target_before_mutation(
     assert not (real / "SKILL.md").exists()
 
 
+def test_rejects_symbolic_link_replacement_without_exact_authorization(
+    tmp_path: Path,
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    target = tmp_path / "reviewer"
+    target.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        apply_mutation(MutationPlan(writes=(), replacements=(target,)))
+
+    assert target.is_symlink()
+    assert real.is_dir()
+
+
+def test_rejects_symlink_authorization_outside_replacements(tmp_path: Path) -> None:
+    target = tmp_path / "reviewer"
+
+    with pytest.raises(ValueError, match="symlink replacement authorization"):
+        MutationPlan(writes=(), allowed_symlink_replacements=(target,))
+
+
+def test_removes_only_an_exact_authorized_symbolic_link(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "keep.txt").write_text("keep", encoding="utf-8")
+    target = tmp_path / "reviewer"
+    target.symlink_to(real, target_is_directory=True)
+
+    apply_mutation(
+        MutationPlan(
+            writes=(),
+            replacements=(target,),
+            allowed_symlink_replacements=(target,),
+        )
+    )
+
+    assert not target.exists()
+    assert not target.is_symlink()
+    assert (real / "keep.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_restores_an_authorized_symlink_when_a_later_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    target = tmp_path / "reviewer"
+    target.symlink_to(real, target_is_directory=True)
+    later = tmp_path / "later.txt"
+
+    def fail_write(path: Path, content: bytes) -> None:
+        raise OSError("injected write failure")
+
+    monkeypatch.setattr(mutation, "atomic_write", fail_write)
+
+    with pytest.raises(OSError, match="injected write failure"):
+        apply_mutation(
+            MutationPlan(
+                writes=(Write(later, b"later"),),
+                replacements=(target,),
+                allowed_symlink_replacements=(target,),
+            )
+        )
+
+    assert target.is_symlink()
+    assert target.resolve() == real.resolve()
+    assert not later.exists()
+
+
 def test_rejects_a_write_inside_a_complete_projection(tmp_path: Path) -> None:
     target = tmp_path / "reviewer"
     projection = DirectoryProjection(
