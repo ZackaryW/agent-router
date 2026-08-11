@@ -75,6 +75,7 @@ Feature: Use agent-router as a library or optional command
       | kind  | operation |
       | skill | inspect   |
       | skill | install   |
+      | skill | update    |
       | skill | uninstall |
       | hook  | inspect   |
       | hook  | install   |
@@ -99,6 +100,7 @@ Feature: Use agent-router as a library or optional command
       | uninstall | user    |
       | inspect   | project |
       | install   | project |
+      | update    | project |
       | uninstall | project |
 
   Scenario: Require a project root with a destination override
@@ -106,6 +108,31 @@ Feature: Use agent-router as a library or optional command
     But no project root
     When I request a lifecycle operation
     Then the request is rejected before destination inspection or mutation
+
+  Scenario: Update a local skill through the library and command
+    Given a valid authoritative skill update and existing project target
+    When I invoke update_skill or "agent-router skill update" with explicit project scope
+    Then the request uses the complete-target project update lifecycle
+    And the result is structured for the library or deterministic for the command
+
+  Scenario Outline: Validate public Git ignore policy
+    Given a project skill update selects <policy>
+    When the library or command validates its ignore options
+    Then the request is <outcome> before project mutation
+
+    Examples:
+      | policy                              | outcome  |
+      | exact without a pattern             | accepted |
+      | pattern with one explicit pattern   | accepted |
+      | none without a pattern              | accepted |
+      | pattern without a pattern           | rejected |
+      | exact with a pattern                | rejected |
+      | none with a pattern                 | rejected |
+
+  Scenario: Reject user-scope skill update
+    Given a valid authoritative skill update source
+    When update_skill or "agent-router skill update" selects user scope
+    Then the request is rejected before target inspection or mutation
 
   Scenario: Emit JSON for automation
     Given a valid lifecycle command with "--json"

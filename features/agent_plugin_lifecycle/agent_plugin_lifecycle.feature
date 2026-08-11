@@ -105,3 +105,9 @@ Feature: Manage native agent plugins
     When I request a plugin lifecycle operation
     Then the outcome reports the unavailable agent deterministically
     And no undocumented fallback mutates state
+
+  Scenario: Persist plugin authority outside native discovery
+    Given a plugin installation is authoritatively verified
+    When agent-router records its scoped ownership and artifact policy
+    Then the receipt and policy use the selected router application-data root
+    And no router metadata is added to native plugin discovery or runtime content

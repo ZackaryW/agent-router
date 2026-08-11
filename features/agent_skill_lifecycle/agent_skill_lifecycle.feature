@@ -84,3 +84,76 @@ Feature: Manage Agent Skills
     Given a valid portable Agent Skill
     When I request one skill operation for Codex and Claude
     Then the request is rejected before destination mutation
+
+  Scenario Outline: Fully replace an existing local skill
+    Given an existing repository-local skill that is <state>
+    And a valid authoritative update source with different files
+    When I explicitly update that skill in project scope
+    Then the complete exact target is replaced from the update source
+    And stale target files are removed while neighboring skills are retained
+    And current project ownership is recorded
+
+    Examples:
+      | state     |
+      | modified  |
+      | unmanaged |
+
+  Scenario: Repeat an identical local skill update
+    Given an existing repository-local skill identical to the update source
+    When I explicitly update that skill in project scope
+    Then update succeeds as a no-op without rewriting the target
+
+  Scenario Outline: Reject a local update without a safe existing target
+    Given a repository-local skill target that is <state>
+    When I explicitly update that skill in project scope
+    Then update fails before target or router-state mutation
+
+    Examples:
+      | state                   |
+      | absent                  |
+      | a symbolic link         |
+      | an unsupported entry    |
+
+  Scenario: Reject authoritative update outside project scope
+    Given a valid authoritative update source
+    When I request skill update without explicit project scope and project root
+    Then the request is rejected before target inspection or mutation
+    And user-scope conflict protection remains unchanged
+
+  Scenario: Restore a local skill when update fails
+    Given an existing repository-local skill and valid authoritative update source
+    When target, ownership, migration, or requested Git-ignore mutation fails during update
+    Then the complete previous target and associated state are restored
+    And no partial or merged projection is reported as updated
+
+  Scenario: Ignore only the updated skill by default
+    Given a Git repository whose project state and selected skill are not ignored
+    When I update the local skill with default ignore policy
+    Then the repository ignores its .z-agent-router state and that exact skill target
+    And unrelated skills and ignore rules remain visible and unchanged
+
+  Scenario: Reuse effective glob ignore coverage
+    Given an existing Git ignore glob effectively covers the selected skill target
+    When I update the local skill with exact ignore policy
+    Then update accepts the effective coverage without adding a redundant target rule
+
+  Scenario Outline: Apply an explicit Git ignore pattern
+    Given a caller supplies a pattern that is <effect>
+    When I update the local skill with pattern ignore policy
+    Then the update <outcome> before target replacement
+
+    Examples:
+      | effect                                  | outcome                              |
+      | effective for the selected target       | establishes that pattern             |
+      | ineffective for the selected target     | fails without changing the repository |
+      | defeated by an effective negation       | fails without changing the repository |
+
+  Scenario: Disable Git ignore management
+    Given a project directory that need not be a Git worktree
+    When I update the local skill with none ignore policy
+    Then update does not inspect or change Git ignore state
+
+  Scenario: Require a Git worktree for managed ignore policy
+    Given a project directory outside a usable Git worktree
+    When I update the local skill with exact or pattern ignore policy
+    Then update fails before changing the target, router state, or project files
